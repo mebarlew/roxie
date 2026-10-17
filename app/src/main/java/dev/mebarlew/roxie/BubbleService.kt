@@ -84,7 +84,7 @@ class BubbleService : Service() {
     private fun startInForeground() {
         val notifications = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
         notifications.createNotificationChannel(
-            NotificationChannel(CHANNEL, "Roxie", NotificationManager.IMPORTANCE_MIN),
+            NotificationChannel(CHANNEL, "Rubber Duck Assistant", NotificationManager.IMPORTANCE_MIN),
         )
         val open = PendingIntent.getActivity(
             this, 0, Intent(this, MainActivity::class.java), PendingIntent.FLAG_IMMUTABLE,
@@ -218,7 +218,7 @@ class BubbleService : Service() {
                     SpeechRecognizer.ERROR_NO_MATCH, SpeechRecognizer.ERROR_SPEECH_TIMEOUT ->
                         "Didn't catch that. Tap me and try again!"
                     SpeechRecognizer.ERROR_INSUFFICIENT_PERMISSIONS ->
-                        "I need the microphone permission. Open the Roxie app to fix it."
+                        "I need the microphone permission. Open Rubber Duck Assistant to fix it."
                     SpeechRecognizer.ERROR_NETWORK, SpeechRecognizer.ERROR_NETWORK_TIMEOUT ->
                         "My ears need internet right now."
                     else -> "My ears glitched (error $error). Tap me to try again!"

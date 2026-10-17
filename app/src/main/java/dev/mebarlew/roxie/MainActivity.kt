@@ -118,7 +118,7 @@ private fun SetupScreen(
             verticalArrangement = Arrangement.spacedBy(16.dp),
         ) {
             Image(roxie, "Roxie", Modifier.size(200.dp), filterQuality = FilterQuality.None)
-            Text("Roxie the Helper", fontSize = 30.sp, fontWeight = FontWeight.Black, color = Ink)
+            Text("Rubber Duck Assistant", fontSize = 30.sp, fontWeight = FontWeight.Black, color = Ink)
             Text(
                 "Your tiny helper that floats over every app",
                 color = Ink.copy(alpha = 0.7f),

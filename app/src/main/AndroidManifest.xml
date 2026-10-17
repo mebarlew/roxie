@@ -20,7 +20,7 @@
 
     <application
         android:icon="@mipmap/ic_launcher"
-        android:label="Roxie"
+        android:label="Rubber Duck Assistant"
         android:roundIcon="@mipmap/ic_launcher"
         android:supportsRtl="true"
         android:theme="@android:style/Theme.Material.Light.NoActionBar">
