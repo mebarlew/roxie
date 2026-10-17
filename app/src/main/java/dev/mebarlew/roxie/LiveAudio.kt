@@ -52,6 +52,7 @@ class LiveAudio(
     // can't race a flush. The lock covers what other threads read: the track's position and the counts.
     private val lock = Any()
     private var writer: Thread? = null
+    private var released = false
     private var track: AudioTrack? = null
     private var framesWritten = 0L
     private var framesInWindows = 0L
@@ -142,6 +143,8 @@ class LiveAudio(
     /** Queues 24 kHz 16-bit mono PCM from Live. Only call it when the buddy may make sound. */
     fun play(pcm: ByteArray) {
         synchronized(lock) {
+            // A chunk still in flight from the socket after release() would start a writer and a track nobody frees.
+            if (released) return
             if (writer == null) writer = Thread(::writeSpeaker, "live-speaker").also { it.start() }
         }
         queue.put(Chunk(generation.get(), pcm))
@@ -158,7 +161,10 @@ class LiveAudio(
     fun release() {
         stopMic()
         generation.incrementAndGet()
-        val w = synchronized(lock) { writer.also { writer = null } }
+        val w = synchronized(lock) {
+            released = true
+            writer.also { writer = null }
+        }
         w?.interrupt()
         w?.join(JOIN_MS)
         queue.clear()
@@ -181,7 +187,7 @@ class LiveAudio(
                     continue
                 }
                 if (chunk.gen != generation.get()) continue
-                val t = synchronized(lock) { track ?: newTrack().also { track = it } }
+                val t = synchronized(lock) { track ?: newTrack()?.also { track = it } } ?: continue
                 synchronized(lock) { addWindows(pcm) }
                 // Small slices, so a flush mid-chunk waits for at most one slice before it takes effect.
                 var off = 0
@@ -237,8 +243,8 @@ class LiveAudio(
         leftover = bytes.copyOfRange(rms.size * MOUTH_WINDOW_FRAMES * 2, bytes.size)
     }
 
-    private fun newTrack(): AudioTrack {
-        val t = AudioTrack.Builder()
+    private fun newTrack(): AudioTrack? {
+        val builder = AudioTrack.Builder()
             .setAudioAttributes(
                 AudioAttributes.Builder()
                     .setUsage(AudioAttributes.USAGE_VOICE_COMMUNICATION)
@@ -254,7 +260,13 @@ class LiveAudio(
             )
             .setTransferMode(AudioTrack.MODE_STREAM)
             .setPerformanceMode(AudioTrack.PERFORMANCE_MODE_LOW_LATENCY)
-            .build()
+        val t = try {
+            builder.build()
+        } catch (e: UnsupportedOperationException) {
+            // AOSP: thrown "if the device was not available". Uncaught on this thread it would crash the app,
+            // so the chunk is dropped and the next one tries again.
+            return null
+        }
         routeToSpeaker()
         t.play()
         return t
