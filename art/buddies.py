@@ -241,9 +241,42 @@ def bunny(d, f, v):
         d.arc((32, 47, 36, 52), 20, 160, fill=INK)
 
 
-DRAW = {"duck": duck, "cat": cat, "frog": frog, "bunny": bunny}
-BUDDIES = ["duck", "cat", "frog", "bunny"]
-NAMES = {"duck": "Sudo", "cat": "Cat", "frog": "Frog", "bunny": "Bunny"}
+# Tail tip and wing lift per state for the rubber duck.
+RUBBER_TAIL = {"rest": (6, 29), "perk": (5, 25), "wiggleL": (4, 23), "wiggleR": (7, 31), "droop": (4, 38)}
+RUBBER_WING = {"rest": 0, "perk": -2, "wiggleL": 0, "wiggleR": -5, "droop": 3}
+
+
+def rubber(d, f, v):
+    """Classic side-view rubber duck facing right."""
+    p = PAL["duck"]
+    d.polygon([(9, 42), RUBBER_TAIL[f.ears], (20, 35)], fill=p["body"])
+    d.ellipse((5, 30, 58, 61), fill=p["shade"])
+    d.ellipse((5, 30, 56, 59), fill=p["body"])
+    w = RUBBER_WING[f.ears]
+    d.ellipse((16, 38 + w, 38, 50 + w), fill=p["shade"])
+    d.arc((16, 38 + w, 38, 50 + w), 10, 170, fill=INK)
+    d.line([(20, 40 + w), (30, 39 + w)], fill=p["light"])
+    d.ellipse((28, 6, 56, 35), fill=p["body"])
+    d.ellipse((33, 9, 41, 15), fill=p["light"])
+    bow(d, 40, 7, v)
+    eye(d, 45, 18, f.eyes, 1, p["body"])
+    d.ellipse((37, 24, 43, 27), fill=BLUSH)
+    open_by = {"talk2": 0, "open_smile": 0, "talk1": 2, "o": 3}
+    if f.mouth in open_by:
+        k = open_by[f.mouth]
+        d.ellipse((52, 20, 61, 29 - k), fill=MOUTH)
+        if f.mouth == "open_smile":
+            d.ellipse((54, 24, 59, 27), fill=TONGUE)
+        d.chord((51, 22 - k, 62, 31 - k), 0, 180, fill=p["beak_shade"], outline=INK)
+        d.ellipse((50, 16, 63, 23), fill=p["beak"], outline=INK)
+    else:
+        d.ellipse((50, 18, 63, 28), fill=p["beak"], outline=INK)
+        d.line([(52, 23), (62, 23)] if f.mouth == "flat" else [(52, 22), (57, 24), (62, 23)], fill=p["beak_shade"])
+
+
+DRAW = {"rubber": rubber, "duck": duck, "cat": cat, "frog": frog, "bunny": bunny}
+BUDDIES = ["rubber", "duck", "cat", "frog", "bunny"]
+NAMES = {"rubber": "Sudo", "duck": "Duckling", "cat": "Cat", "frog": "Frog", "bunny": "Bunny"}
 
 
 @lru_cache(maxsize=None)
@@ -399,7 +432,7 @@ def sheet(path):
     label = base.ImageFont.truetype(base.FONT_DIR + "LiberationSans-Bold.ttf", 26)
     small = base.ImageFont.truetype(base.FONT_DIR + "LiberationSans-Regular.ttf", 22)
     base.centered_text(d, width / 2, 24, "Pick your buddy", title)
-    base.centered_text(d, width / 2, 98, "Sudo the duck (default) · cat · frog · bunny · the bow takes your colour",
+    base.centered_text(d, width / 2, 98, "Sudo the rubber duck (default) · duckling · cat · frog · bunny · the bow takes your colour",
                        small, (120, 100, 160))
 
     def col_x(i):
@@ -423,7 +456,7 @@ def sheet(path):
     for i, variant in enumerate(base.VARIANTS):
         x = col_x(i)
         base.card(img, (x, y, x + cw, y + 260))
-        spr = buddy("duck", POSES["happy"], variant).resize((192, 192), Image.NEAREST)
+        spr = buddy("rubber", POSES["happy"], variant).resize((192, 192), Image.NEAREST)
         img.alpha_composite(spr, (x + (cw - spr.width) // 2, y + 8))
         base.centered_text(ImageDraw.Draw(img), x + cw / 2, y + 214, variant, label)
 
