@@ -9,6 +9,7 @@ import android.graphics.Path
 import android.graphics.PixelFormat
 import android.graphics.RectF
 import android.graphics.drawable.Drawable
+import android.os.Build
 import android.os.Handler
 import android.os.Looper
 import android.text.SpannableString
@@ -24,6 +25,11 @@ import kotlin.math.hypot
 import kotlin.math.roundToInt
 
 val INK = Color.rgb(52, 40, 92)
+
+/** Phones with "dark theme for all apps" would invert the white disc and bubble; the candy look stays as drawn. */
+fun keepColors(view: View) {
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) view.isForceDarkAllowed = false
+}
 
 /** The floating buddy disc. Plays 100 ms frame animations; drag to move, tap to talk. */
 class BuddyView(
@@ -91,6 +97,10 @@ class BuddyView(
     }
 
     val size: Int get() = DISC * pixel
+
+    init {
+        keepColors(this)
+    }
 
     override fun onAttachedToWindow() {
         super.onAttachedToWindow()
@@ -245,6 +255,7 @@ class SpeechBubbleView(
     private val speaker = TextView(context)
     private val main = Handler(Looper.getMainLooper())
     private var typer: Runnable? = null
+    private var message = ""
 
     /** Distance from the bubble's top to the tip of its tail. */
     val tailY: Int get() = shape.tailY.toInt()
@@ -259,6 +270,7 @@ class SpeechBubbleView(
         }
 
     init {
+        keepColors(this)
         orientation = VERTICAL
         background = shape
         tailOnLeft = true
@@ -287,6 +299,7 @@ class SpeechBubbleView(
     fun show(message: String, animate: Boolean, speakerState: Speaker, onTyping: (Boolean) -> Unit) {
         typer?.let { main.removeCallbacks(it) }
         typer = null
+        this.message = message
         speaker.visibility = if (speakerState == Speaker.HIDDEN) GONE else VISIBLE
         speaker.alpha = if (speakerState == Speaker.MUTED) 0.3f else 1f
         speaker.isEnabled = speakerState == Speaker.ON
@@ -319,6 +332,12 @@ class SpeechBubbleView(
     fun stopTyping() {
         typer?.let { main.removeCallbacks(it) }
         typer = null
+    }
+
+    /** Stops the typing effect and shows the whole message at once. */
+    fun finishTyping() {
+        stopTyping()
+        body.text = message
     }
 
     private fun partial(message: String, shown: Int) = SpannableString(message).apply {

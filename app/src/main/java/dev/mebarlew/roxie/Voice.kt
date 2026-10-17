@@ -28,6 +28,10 @@ class Voice(private val context: Context, private val prefs: Prefs, private val 
     private var mouthTicker: Runnable? = null
     private var generation = 0
 
+    /** True from [speak] until the speech ends or is stopped, including while the audio is still loading. */
+    var busy = false
+        private set
+
     /** Silent, vibrate or Do Not Disturb means the buddy makes no sound at all. */
     fun soundAllowed(): Boolean {
         val ringer = (context.getSystemService(Context.AUDIO_SERVICE) as AudioManager).ringerMode
@@ -43,12 +47,17 @@ class Voice(private val context: Context, private val prefs: Prefs, private val 
             onDone()
             return
         }
+        busy = true
+        val done = {
+            busy = false
+            onDone()
+        }
         val request = generation
         io.execute {
             val file = runCatching { cachedSpeech(text, prefs.voice) }.getOrNull()
             main.post {
                 if (request != generation) return@post
-                if (file != null) play(file, text, onDone) else speakOnDevice(text, onDone)
+                if (file != null) play(file, text, done) else speakOnDevice(text, done)
             }
         }
     }
@@ -79,6 +88,7 @@ class Voice(private val context: Context, private val prefs: Prefs, private val 
 
     fun stop() {
         generation++
+        busy = false
         stopMouth()
         player?.release()
         player = null

@@ -75,6 +75,7 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
+        keepColors(window.decorView)
         val prefs = Prefs(this)
         voice = Voice(this, prefs) {}
         setContent {

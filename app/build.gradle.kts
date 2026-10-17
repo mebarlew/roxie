@@ -11,8 +11,8 @@ android {
         applicationId = "dev.mebarlew.roxie"
         minSdk = 26
         targetSdk = 36
-        versionCode = 3
-        versionName = "0.3.0"
+        versionCode = 4
+        versionName = "0.3.1"
         buildConfigField("String", "GATEWAY_URL", "\"https://ai-gateway.mebarlew.workers.dev\"")
         buildConfigField("String", "GATEWAY_KEY", "\"${System.getenv("ROXIE_GATEWAY_KEY").orEmpty()}\"")
     }

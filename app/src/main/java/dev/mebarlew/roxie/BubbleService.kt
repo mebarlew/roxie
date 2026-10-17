@@ -156,7 +156,14 @@ class BubbleService : Service() {
             showBubble("Okay, I'll be right here!")
             return
         }
-        // A tap always cuts the buddy off: no waiting for it to finish talking or thinking.
+        // Tapping while it reads an answer shushes it and leaves the text up; the next tap is a new question.
+        if (mode == Mode.ANSWERING && (voice.busy || typing)) {
+            voice.stop()
+            bubble.finishTyping()
+            typing = false
+            return
+        }
+        // Mid-greeting or mid-thinking, a tap cuts it off and listens right away.
         val fresh = mode == Mode.IDLE
         voice.stop()
         bubble.stopTyping()
