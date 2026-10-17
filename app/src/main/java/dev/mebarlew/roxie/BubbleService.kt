@@ -1,5 +1,6 @@
 package dev.mebarlew.roxie
 
+import android.accessibilityservice.AccessibilityService
 import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
@@ -235,22 +236,30 @@ class BubbleService : Service() {
     }
 
     /** Grabs the screen without the speech bubble in the way, when screen reading is switched on. */
-    private fun lookAtScreen(then: () -> Unit) {
+    private fun lookAtScreen(then: (note: String) -> Unit) {
         screen = null
         val reader = ScreenReader.instance
         if (reader == null || Build.VERSION.SDK_INT < Build.VERSION_CODES.R) {
-            then()
+            then("")
             return
         }
         bubble.visibility = View.INVISIBLE
         main.postDelayed({
-            reader.capture { jpeg ->
+            reader.capture { jpeg, error ->
                 main.post {
                     screen = jpeg
-                    then()
+                    then(screenNote(error))
                 }
             }
         }, BUBBLE_HIDE_MS)
+    }
+
+    /** Says why the buddy can't see the screen, so a screen question isn't answered blind without a word. */
+    private fun screenNote(error: Int?): String = when (error) {
+        AccessibilityService.ERROR_TAKE_SCREENSHOT_SECURE_WINDOW -> "🙈 This app hides its screen, so I can't look.\n"
+        AccessibilityService.ERROR_TAKE_SCREENSHOT_NO_ACCESSIBILITY_ACCESS ->
+            "Screen reading got switched off. Turn it back on in the app.\n"
+        else -> ""
     }
 
     private fun startListening(retry: Boolean = true) {
@@ -385,9 +394,9 @@ class BubbleService : Service() {
         lastLiveActivity = SystemClock.uptimeMillis()
         mode = Mode.LISTENING
         live = LiveSession(brain.systemPrompt(), prefs.voice, LiveEvents(gen)).also { it.start() }
-        lookAtScreen {
+        lookAtScreen { note ->
             if (gen != liveGen) return@lookAtScreen
-            if (mode == Mode.LISTENING && heardText.isEmpty()) showBubble("🎤 I'm listening…", animate = false)
+            if (mode == Mode.LISTENING && heardText.isEmpty()) showBubble("$note🎤 I'm listening…", animate = false)
             sendScreen()
         }
     }

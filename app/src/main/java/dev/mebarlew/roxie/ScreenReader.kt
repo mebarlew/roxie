@@ -4,6 +4,8 @@ import android.accessibilityservice.AccessibilityService
 import android.content.Intent
 import android.graphics.Bitmap
 import android.os.Build
+import android.os.Handler
+import android.os.Looper
 import android.view.Display
 import android.view.accessibility.AccessibilityEvent
 import java.io.ByteArrayOutputStream
@@ -12,6 +14,7 @@ import java.util.concurrent.Executors
 /** Lets the buddy look at the screen, only when you tap it. It never reads anything on its own. */
 class ScreenReader : AccessibilityService() {
     private val worker = Executors.newSingleThreadExecutor()
+    private val main = Handler(Looper.getMainLooper())
 
     override fun onServiceConnected() {
         instance = this
@@ -28,14 +31,19 @@ class ScreenReader : AccessibilityService() {
 
     override fun onDestroy() {
         instance = null
+        main.removeCallbacksAndMessages(null)
         worker.shutdownNow()
         super.onDestroy()
     }
 
-    /** JPEG of the screen, or null when it can't be taken (Android 10 or older, a secure app like banking, or too soon). Runs [onResult] on a worker thread. */
-    fun capture(onResult: (ByteArray?) -> Unit) {
+    /**
+     * JPEG of the screen, or null when it can't be taken (Android 10 or older, a secure app like banking). On a
+     * failure [onResult] also gets Android's `ERROR_TAKE_SCREENSHOT_*` code, so the bubble can say why. Too soon
+     * after the last one is retried once. Runs [onResult] on a worker thread.
+     */
+    fun capture(retry: Boolean = true, onResult: (jpeg: ByteArray?, error: Int?) -> Unit) {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) {
-            onResult(null)
+            onResult(null, null)
             return
         }
         takeScreenshot(Display.DEFAULT_DISPLAY, worker, object : TakeScreenshotCallback {
@@ -46,10 +54,16 @@ class ScreenReader : AccessibilityService() {
                 } finally {
                     buffer.close()
                 }
-                onResult(jpeg)
+                onResult(jpeg, null)
             }
 
-            override fun onFailure(errorCode: Int) = onResult(null)
+            override fun onFailure(errorCode: Int) {
+                if (retry && errorCode == AccessibilityService.ERROR_TAKE_SCREENSHOT_INTERVAL_TIME_SHORT) {
+                    main.postDelayed({ capture(retry = false, onResult) }, SCREENSHOT_INTERVAL_MS)
+                } else {
+                    onResult(null, errorCode)
+                }
+            }
         })
     }
 
@@ -69,6 +83,9 @@ class ScreenReader : AccessibilityService() {
     companion object {
         /** Screenshots are scaled down to this width: plenty for the AI, small to upload. */
         private const val MAX_WIDTH = 720
+
+        /** Android allows one screenshot per this long (AOSP's ACCESSIBILITY_TAKE_SCREENSHOT_REQUEST_INTERVAL_TIMES_MS, hidden). */
+        private const val SCREENSHOT_INTERVAL_MS = 333L
 
         @Volatile
         var instance: ScreenReader? = null
