@@ -184,13 +184,62 @@ def bunny(d, pose, v):
         d.arc((32, 47, 36, 52), 20, 160, fill=INK)
 
 
-DRAW = {"duck": duck, "cat": cat, "frog": frog, "bunny": bunny}
+def girl_eye(d, cx, cy, state, v):
+    if state not in ("open", "up"):
+        eye(d, cx, cy, state)
+        return
+    dx, dy = (1, -2) if state == "up" else (0, 0)
+    x, y = cx + dx, cy + dy
+    d.ellipse((x - 3, y - 4, x + 3, y + 4), fill=INK)
+    d.ellipse((x - 2, y, x + 2, y + 3), fill=v["iris"])
+    d.rectangle((x - 2, y - 3, x - 1, y - 2), fill=WHITE)
+    d.point((x + 1, y + 1), fill=v["iris_light"])
+
+
+def roxie(d, pose, v):
+    """Roxie in the same chibi style as the animals: brown bob, blue eyes, cat-ear beanie."""
+    p = {k: roxie_hd.PAL[k] for k in ("hair", "hair_light", "hair_shade", "skin", "skin_shade")}
+    ear = [(12, 20), (12, 2), (26, 11)]
+    inner = [(15, 16), (15, 7), (22, 12)]
+    for pts in (ear, mirror(ear)):
+        d.polygon(pts, fill=v["hat"], outline=INK)
+    for pts in (inner, mirror(inner)):
+        d.polygon(pts, fill=v["ear_inner"])
+    d.ellipse((8, 10, 56, 61), fill=p["hair_shade"])
+    d.ellipse((8, 10, 54, 59), fill=p["hair"])
+    d.ellipse((14, 21, 50, 59), fill=p["skin_shade"])
+    d.ellipse((14, 21, 48, 57), fill=p["skin"])
+    d.chord((12, 12, 52, 46), 180, 360, fill=p["hair"])
+    for box in ((14, 22, 25, 34), (22, 23, 33, 35), (31, 23, 42, 35), (39, 22, 50, 34)):
+        d.chord(box, 0, 180, fill=p["hair"])
+    d.line([(18, 27), (22, 25)], fill=p["hair_light"], width=2)
+    d.chord((10, 3, 54, 38), 180, 360, fill=v["hat"], outline=INK)
+    d.arc((16, 7, 48, 30), 205, 335, fill=v["hat_light"], width=2)
+    d.rectangle((9, 17, 55, 23), fill=v["hat_light"], outline=INK)
+    for x in range(12, 54, 3):
+        d.line([(x, 18), (x, 22)], fill=v["hat"])
+    girl_eye(d, 25, 41, EYES[pose], v)
+    girl_eye(d, 39, 41, EYES[pose], v)
+    blush(d, 47, 15, 43)
+    mouth = MOUTHS[pose]
+    if mouth == "talk":
+        d.chord((28, 47, 36, 55), 0, 180, fill=MOUTH)
+    elif mouth == "open_smile":
+        d.chord((27, 46, 37, 56), 0, 180, fill=MOUTH)
+        d.ellipse((30, 51, 34, 54), fill=TONGUE)
+    elif mouth == "o":
+        d.ellipse((30, 49, 34, 53), fill=MOUTH)
+    elif mouth == "flat":
+        d.line([(30, 50), (34, 50)], fill=INK)
+    else:
+        d.arc((28, 45, 36, 51), 30, 150, fill=INK)
+
+
+DRAW = {"duck": duck, "cat": cat, "frog": frog, "bunny": bunny, "roxie": roxie}
 BUDDIES = ["duck", "cat", "frog", "bunny", "roxie"]
 
 
 def buddy(name, pose="idle", variant="Blueberry"):
-    if name == "roxie":
-        return roxie_hd.roxie(pose, variant=variant)
     img = Image.new("RGBA", (SIZE, SIZE), (0, 0, 0, 0))
     d = ImageDraw.Draw(img)
     DRAW[name](d, pose, base.VARIANTS[variant])
@@ -262,8 +311,6 @@ def sheet(path):
         by = y + 100
         ImageDraw.Draw(img).ellipse((bx, by, bx + disc, by + disc), fill=WHITE, outline=(200, 190, 235), width=3)
         face = buddy(name)
-        if face.width != SIZE:
-            face = face.resize((SIZE, SIZE), Image.LANCZOS)
         img.alpha_composite(face, (bx + (disc - SIZE) // 2, by + (disc - SIZE) // 2 + 2))
     img.convert("RGB").save(path)
 
