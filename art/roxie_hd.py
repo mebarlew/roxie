@@ -9,21 +9,22 @@ from PIL import Image, ImageDraw
 SIZE = 96
 CX = 48
 
+# Roxie's look: brown hair, blue eyes, blue cat-ear beanie (Blueberry). Other colours are swaps.
 PAL = {
-    "outline": (92, 56, 60),
-    "hair": (232, 200, 206),
-    "hair_light": (248, 230, 232),
-    "hair_shade": (204, 164, 176),
-    "hair_line": (150, 104, 118),
+    "outline": (70, 42, 46),
+    "hair": (150, 96, 72),
+    "hair_light": (196, 136, 102),
+    "hair_shade": (118, 72, 58),
+    "hair_line": (86, 50, 42),
     "skin": (253, 230, 216),
     "skin_shade": (242, 204, 188),
     "blush": (246, 150, 156),
     "white": (255, 255, 255),
     "sclera_shade": (226, 222, 240),
-    "iris_dark": (110, 36, 58),
-    "iris": (192, 74, 70),
-    "iris_light": (244, 156, 108),
-    "lash": (64, 30, 42),
+    "iris_dark": (36, 48, 130),
+    "iris": (78, 118, 220),
+    "iris_light": (150, 196, 255),
+    "lash": (40, 28, 50),
     "mouth": (160, 78, 84),
     "tie": (126, 186, 240),
     "tie_shade": (84, 136, 214),
@@ -190,7 +191,24 @@ def outline(img):
     return img
 
 
-def roxie(pose="idle", hat=False):
+def recolor(img, variant):
+    """Swap the accent colours exactly like the app does at runtime."""
+    import sprite as base
+
+    v = base.VARIANTS[variant]
+    darken = tuple(round(c * 0.45) for c in v["iris"])
+    swap = {PAL[k]: v[k] for k in ("hat", "hat_shade", "hat_light", "ear_inner", "iris", "iris_light")}
+    swap[PAL["iris_dark"]] = darken
+    px = img.load()
+    for y in range(SIZE):
+        for x in range(SIZE):
+            r, g, b, a = px[x, y]
+            if a and (r, g, b) in swap:
+                px[x, y] = swap[(r, g, b)] + (a,)
+    return img
+
+
+def roxie(pose="idle", hat=True, variant="Blueberry"):
     img = Image.new("RGBA", (SIZE, SIZE), (0, 0, 0, 0))
     d = ImageDraw.Draw(img)
     draw_hair_back(d)
@@ -205,49 +223,53 @@ def roxie(pose="idle", hat=False):
         draw_hat(d)
     else:
         draw_ties(d)
-    return outline(img)
-
-
+    img = outline(img)
+    return img if variant == "Blueberry" else recolor(img, variant)
 
 
 def sheet(path):
-    """Presentation sheet: every pose with hair ties and with the cat-ear beanie, plus bubble size."""
+    """Presentation sheet: every pose, the candy colours, and old vs new at bubble size."""
     import sprite as base
 
     scale, cw, ch, gap = 3, 300, 350, 22
     poses = list(EYES)
     width = len(poses) * cw + (len(poses) + 1) * gap
-    height = 1230
+    height = 150 + 2 * ch + 30 + 40
     img = base.gradient(width, height, (255, 228, 240), (214, 228, 255)).convert("RGBA")
     d = ImageDraw.Draw(img)
     title = base.ImageFont.truetype(base.PIXEL_FONT, 64)
     label = base.ImageFont.truetype(base.FONT_DIR + "LiberationSans-Bold.ttf", 26)
     small = base.ImageFont.truetype(base.FONT_DIR + "LiberationSans-Regular.ttf", 22)
-    base.centered_text(d, width / 2, 24, "Roxie v2", title)
-    base.centered_text(d, width / 2, 98, "anime pixel style · 96 x 96 · hair ties or cat-ear beanie?",
+    base.centered_text(d, width / 2, 24, "Roxie, anime pixel style", title)
+    base.centered_text(d, width / 2, 98, "same Roxie: brown hair, blue eyes, cat-ear beanie · 96 x 96",
                        small, (120, 100, 160))
-    for row, hat in enumerate((False, True)):
-        y = 150 + row * (ch + 30)
-        for i, p in enumerate(poses):
-            x = gap + i * (cw + gap)
-            base.card(img, (x, y, x + cw, y + ch))
-            spr = roxie(p, hat).resize((SIZE * scale, SIZE * scale), Image.NEAREST)
-            img.alpha_composite(spr, (x + (cw - spr.width) // 2, y + 6))
-            base.centered_text(ImageDraw.Draw(img), x + cw / 2, y + ch - 46, p, label)
-    y = 150 + 2 * (ch + 30)
-    for i, hat in enumerate((False, True)):
-        x = width // 2 - 420 + i * 470
-        for j, s in enumerate((1, 2)):
-            disc = SIZE * s + 12 * s
-            bx, by = x + j * 150, y + (230 - disc) // 2
-            ImageDraw.Draw(img).ellipse((bx, by, bx + disc, by + disc), fill=(255, 255, 255, 255),
-                                        outline=(200, 190, 235), width=2 * s)
-            img.alpha_composite(roxie("idle", hat).resize((SIZE * s, SIZE * s), Image.NEAREST),
-                                (bx + 6 * s, by + 8 * s))
-        ImageDraw.Draw(img).text((x, y + 236), ("hair ties" if not hat else "cat-ear beanie")
-                                 + ": real bubble size", font=small, fill=(110, 96, 150))
+
+    def tile(x, y, pose, variant, caption):
+        base.card(img, (x, y, x + cw, y + ch))
+        spr = roxie(pose, variant=variant).resize((SIZE * scale, SIZE * scale), Image.NEAREST)
+        img.alpha_composite(spr, (x + (cw - spr.width) // 2, y + 6))
+        base.centered_text(ImageDraw.Draw(img), x + cw / 2, y + ch - 46, caption, label)
+
+    y = 150
+    for i, p in enumerate(poses):
+        tile(gap + i * (cw + gap), y, p, "Blueberry", p)
+    y += ch + 30
+    variants = list(base.VARIANTS)
+    for i, v in enumerate(variants):
+        tile(gap + i * (cw + gap), y, "idle", v, v + (" (default)" if i == 0 else ""))
+
+    # Old vs new, side by side in the two empty slots of the colour row.
+    x0 = gap + len(variants) * (cw + gap)
+    base.card(img, (x0, y, x0 + 2 * cw + gap, y + ch))
+    for j, (face, caption) in enumerate(((base.sprite("idle").resize((160, 160), Image.NEAREST), "old"),
+                                         (roxie("idle").resize((192, 192), Image.NEAREST), "new"))):
+        bx, by, disc = x0 + 50 + j * 300, y + 50, 210
+        ImageDraw.Draw(img).ellipse((bx, by, bx + disc, by + disc), fill=(255, 255, 255, 255),
+                                    outline=(200, 190, 235), width=4)
+        img.alpha_composite(face, (bx + (disc - face.width) // 2, by + (disc - face.height) // 2 + 8))
+        base.centered_text(ImageDraw.Draw(img), bx + disc / 2, by + disc + 20, caption, label)
     img.convert("RGB").save(path)
 
 
 if __name__ == "__main__":
-    sheet("/home/claw/assistant/outbox/roxie-v2-sheet.png")
+    sheet("/home/claw/assistant/outbox/roxie-v3-sheet.png")
