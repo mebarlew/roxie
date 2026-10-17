@@ -224,6 +224,18 @@ private fun SetupScreen(
                 onVoice(it)
             }
             WakeWordCard(wakeOn, wakeStatus, onWakeWord)
+            val steps = buildList {
+                add(overlayOk)
+                add(micOk)
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) add(screenOk)
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) add(notifyOk)
+            }
+            Text(
+                "Let $title in · ${steps.count { it }} of ${steps.size} ready",
+                fontWeight = FontWeight.Bold,
+                color = Ink,
+                modifier = Modifier.fillMaxWidth(),
+            )
             Step("Float over your apps", "So $title can sit on top of anything", overlayOk, onOverlay)
             Step("Hear you", "Tap, talk, $title listens", micOk) { onPermission(Manifest.permission.RECORD_AUDIO) }
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
@@ -239,23 +251,31 @@ private fun SetupScreen(
                     onPermission(Manifest.permission.POST_NOTIFICATIONS)
                 }
             }
-            // A greyed-out button alone doesn't say what's missing, so name the first thing to do.
-            val missing = when {
-                name.isBlank() -> "Tell $title your name first"
-                !overlayOk -> "Allow \"Float over your apps\" first"
-                !micOk -> "Allow \"Hear you\" first"
-                else -> null
+            if (BubbleService.awake) {
+                Text(
+                    "$title is awake. Changes here show up right away.",
+                    color = Ink.copy(alpha = 0.7f),
+                    textAlign = TextAlign.Center,
+                )
+                TextButton(onClick = onSleep) { Text("Put $title to sleep", color = Ink.copy(alpha = 0.6f)) }
+            } else {
+                // A greyed-out button alone doesn't say what's missing, so name the first thing to do.
+                val missing = when {
+                    name.isBlank() -> "Tell $title your name first"
+                    !overlayOk -> "Allow \"Float over your apps\" first"
+                    !micOk -> "Allow \"Hear you\" first"
+                    else -> null
+                }
+                Button(
+                    onClick = onWake,
+                    enabled = missing == null,
+                    shape = RoundedCornerShape(20.dp),
+                    modifier = Modifier.fillMaxWidth().height(56.dp),
+                ) {
+                    Text("Wake $title up", fontSize = 18.sp, fontWeight = FontWeight.Bold)
+                }
+                if (missing != null) Text(missing, fontSize = 13.sp, color = Ink.copy(alpha = 0.6f))
             }
-            Button(
-                onClick = onWake,
-                enabled = missing == null,
-                shape = RoundedCornerShape(20.dp),
-                modifier = Modifier.fillMaxWidth().height(56.dp),
-            ) {
-                Text("Wake $title up", fontSize = 18.sp, fontWeight = FontWeight.Bold)
-            }
-            if (missing != null) Text(missing, fontSize = 13.sp, color = Ink.copy(alpha = 0.6f))
-            TextButton(onClick = onSleep) { Text("Put $title to sleep", color = Ink.copy(alpha = 0.6f)) }
         }
     }
 }

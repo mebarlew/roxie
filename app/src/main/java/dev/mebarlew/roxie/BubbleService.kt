@@ -23,6 +23,9 @@ import android.speech.SpeechRecognizer
 import android.view.Gravity
 import android.view.View
 import android.view.WindowManager
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
 import java.util.Calendar
 import java.util.concurrent.Executors
 
@@ -72,6 +75,7 @@ class BubbleService : Service() {
         startInForeground()
         addOverlays()
         main.post(animator)
+        awake = true
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -81,6 +85,7 @@ class BubbleService : Service() {
     }
 
     override fun onDestroy() {
+        awake = false
         main.removeCallbacksAndMessages(null)
         bubble.stopTyping()
         recognizer?.destroy()
@@ -403,6 +408,10 @@ class BubbleService : Service() {
 
     companion object {
         const val ACTION_STOP = "dev.mebarlew.roxie.STOP"
+
+        /** Compose state, so the setup screen flips the moment the buddy wakes or is put to sleep. */
+        var awake by mutableStateOf(false)
+            private set
         private const val CHANNEL = "roxie"
         private const val NOTIFICATION_ID = 1
         private const val SPEECH_GAP_MS = 400L
