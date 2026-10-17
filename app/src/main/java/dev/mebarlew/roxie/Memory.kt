@@ -37,6 +37,36 @@ class Memory private constructor(private val dir: File) {
 
     @Synchronized fun summary(): String = summary
 
+    @Synchronized fun diary(): List<DiaryEntry> = diary.toList()
+
+    @Synchronized fun addFact(text: String) {
+        // The time doubles as the fact's id on the memory screen, so it must never repeat.
+        val at = maxOf(System.currentTimeMillis(), (facts.maxOfOrNull { it.at } ?: 0) + 1)
+        facts += Fact(text, at)
+        save()
+    }
+
+    @Synchronized fun editFact(at: Long, text: String) {
+        val i = facts.indexOfFirst { it.at == at }
+        if (i < 0) return
+        facts[i] = Fact(text, at)
+        save()
+    }
+
+    @Synchronized fun removeFact(at: Long) {
+        if (facts.removeAll { it.at == at }) save()
+    }
+
+    /** Forgets everything and removes the file, so nothing of it is left on the phone. */
+    @Synchronized fun wipe() {
+        day = LocalDate.now().toString()
+        summary = ""
+        turns.clear()
+        facts.clear()
+        diary.clear()
+        file.delete()
+    }
+
     @Synchronized fun add(question: String, answer: String) {
         val now = System.currentTimeMillis()
         turns += Turn("user", question, now)

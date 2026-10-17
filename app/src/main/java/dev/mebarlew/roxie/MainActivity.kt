@@ -11,6 +11,7 @@ import android.os.Bundle
 import android.provider.Settings
 import androidx.activity.ComponentActivity
 import androidx.activity.SystemBarStyle
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
@@ -22,19 +23,24 @@ import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.systemBarsPadding
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -67,6 +73,7 @@ import kotlinx.coroutines.delay
 import java.util.concurrent.Executors
 
 private val Ink = Color(0xFF34285C)
+private val Backdrop = Brush.verticalGradient(listOf(Color(0xFFFFE4F0), Color(0xFFD6E4FF)))
 
 /** Setup: pick a buddy and colour, your name, the permissions it needs, and the switch that wakes it up. */
 class MainActivity : ComponentActivity() {
@@ -88,30 +95,39 @@ class MainActivity : ComponentActivity() {
         val prefs = Prefs(this)
         voice = Voice(this, prefs) {}
         wakeOn = prefs.wakeWord
+        val memory = Memory.get(this)
         setContent {
-            SetupScreen(
-                refresh = refresh,
-                prefs = prefs,
-                voiceStatus = voiceStatus,
-                onVoice = { name ->
-                    prefs.voice = name
-                    voiceStatus = "Loading $name…"
-                    voice.preview(name) { error -> voiceStatus = error.orEmpty() }
-                },
-                onOverlay = {
-                    startActivity(Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, Uri.parse("package:$packageName")))
-                },
-                onScreen = { startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)) },
-                wakeOn = wakeOn,
-                wakeStatus = wakeStatus,
-                onWakeWord = { on -> setWakeWord(prefs, on) },
-                onPermission = { requestPermission.launch(it) },
-                onWake = {
-                    startForegroundService(Intent(this, BubbleService::class.java))
-                    moveTaskToBack(true)
-                },
-                onSleep = { stopService(Intent(this, BubbleService::class.java)) },
-            )
+            var showMemory by remember { mutableStateOf(false) }
+            BackHandler(enabled = showMemory) { showMemory = false }
+            if (showMemory) {
+                MemoryScreen(refresh, prefs, memory) { showMemory = false }
+            } else {
+                SetupScreen(
+                    refresh = refresh,
+                    prefs = prefs,
+                    memory = memory,
+                    onMemory = { showMemory = true },
+                    voiceStatus = voiceStatus,
+                    onVoice = { name ->
+                        prefs.voice = name
+                        voiceStatus = "Loading $name…"
+                        voice.preview(name) { error -> voiceStatus = error.orEmpty() }
+                    },
+                    onOverlay = {
+                        startActivity(Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, Uri.parse("package:$packageName")))
+                    },
+                    onScreen = { startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)) },
+                    wakeOn = wakeOn,
+                    wakeStatus = wakeStatus,
+                    onWakeWord = { on -> setWakeWord(prefs, on) },
+                    onPermission = { requestPermission.launch(it) },
+                    onWake = {
+                        startForegroundService(Intent(this, BubbleService::class.java))
+                        moveTaskToBack(true)
+                    },
+                    onSleep = { stopService(Intent(this, BubbleService::class.java)) },
+                )
+            }
         }
     }
 
@@ -158,6 +174,8 @@ class MainActivity : ComponentActivity() {
 private fun SetupScreen(
     refresh: Int,
     prefs: Prefs,
+    memory: Memory,
+    onMemory: () -> Unit,
     voiceStatus: String,
     onVoice: (String) -> Unit,
     onOverlay: () -> Unit,
@@ -187,7 +205,7 @@ private fun SetupScreen(
         Column(
             modifier = Modifier
                 .fillMaxSize()
-                .background(Brush.verticalGradient(listOf(Color(0xFFFFE4F0), Color(0xFFD6E4FF))))
+                .background(Backdrop)
                 .systemBarsPadding()
                 .verticalScroll(rememberScrollState())
                 .padding(24.dp),
@@ -225,6 +243,18 @@ private fun SetupScreen(
                 onVoice(it)
             }
             WakeWordCard(wakeOn, wakeStatus, onWakeWord)
+            val factCount = remember(refresh) { memory.facts().size }
+            SetupCard("🧠") {
+                Column(Modifier.weight(1f)) {
+                    Text("Memory", fontWeight = FontWeight.Bold, color = Ink)
+                    Text(
+                        "${if (factCount == 1) "1 fact" else "$factCount facts"}, today and the diary. Kept on this phone only.",
+                        fontSize = 13.sp,
+                        color = Ink.copy(alpha = 0.6f),
+                    )
+                }
+                Button(onClick = onMemory, shape = RoundedCornerShape(14.dp)) { Text("Open") }
+            }
             val steps = buildList {
                 add(overlayOk)
                 add(micOk)
@@ -364,6 +394,141 @@ private fun VoicePicker(selected: String, accent: Color, status: String, onPick:
         }
         if (status.isNotEmpty()) Text(status, fontSize = 13.sp, color = Ink.copy(alpha = 0.7f))
     }
+}
+
+/** What the buddy remembers: facts you can edit, today's summary and the diary. Forgetting happens only here. */
+@Composable
+private fun MemoryScreen(refresh: Int, prefs: Prefs, memory: Memory, onBack: () -> Unit) {
+    var version by remember { mutableIntStateOf(0) }
+    val facts = remember(refresh, version) { memory.facts() }
+    val summary = remember(refresh, version) { memory.summary() }
+    val diary = remember(refresh, version) { memory.diary().asReversed() }
+    var newFact by remember { mutableStateOf("") }
+    var editing by remember { mutableStateOf<Long?>(null) }
+    var editText by remember { mutableStateOf("") }
+    var confirmWipe by remember { mutableStateOf(false) }
+    val title = prefs.buddy.title
+    val accent = Color(CANDY.getValue(prefs.color))
+
+    MaterialTheme(colorScheme = lightColorScheme(primary = accent, onPrimary = Color.White)) {
+        // One lazy list for the whole screen: a LazyColumn inside a scrolling Column throws.
+        LazyColumn(
+            modifier = Modifier.fillMaxSize().background(Backdrop).systemBarsPadding().imePadding(),
+            contentPadding = PaddingValues(24.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            item {
+                Column {
+                    TextButton(onClick = onBack) { Text("‹ Back", color = Ink) }
+                    Text("What $title remembers", fontSize = 26.sp, fontWeight = FontWeight.Black, color = Ink)
+                    Text("Kept on this phone only.", color = Ink.copy(alpha = 0.7f))
+                }
+            }
+            item { SectionTitle("Facts") }
+            if (facts.isEmpty()) {
+                item { Hint("Nothing yet. Add one here, or tell $title \"remember …\" once voice memory lands.") }
+            }
+            items(facts, key = { it.at }) { fact ->
+                SetupCard("📌") {
+                    if (editing == fact.at) {
+                        OutlinedTextField(
+                            value = editText,
+                            onValueChange = { editText = it },
+                            shape = RoundedCornerShape(12.dp),
+                            modifier = Modifier.weight(1f),
+                        )
+                        TextButton(
+                            onClick = {
+                                memory.editFact(fact.at, editText.trim())
+                                editing = null
+                                version++
+                            },
+                            enabled = editText.isNotBlank(),
+                        ) { Text("Save") }
+                    } else {
+                        Text(fact.text, color = Ink, modifier = Modifier.weight(1f))
+                        TextButton(onClick = {
+                            editing = fact.at
+                            editText = fact.text
+                        }) { Text("Edit") }
+                        TextButton(onClick = {
+                            memory.removeFact(fact.at)
+                            version++
+                        }) { Text("Delete") }
+                    }
+                }
+            }
+            item {
+                SetupCard("➕") {
+                    OutlinedTextField(
+                        value = newFact,
+                        onValueChange = { newFact = it },
+                        label = { Text("Add a fact") },
+                        shape = RoundedCornerShape(12.dp),
+                        modifier = Modifier.weight(1f),
+                    )
+                    TextButton(
+                        onClick = {
+                            memory.addFact(newFact.trim())
+                            newFact = ""
+                            version++
+                        },
+                        enabled = newFact.isNotBlank(),
+                    ) { Text("Add") }
+                }
+            }
+            item { SectionTitle("Today") }
+            item {
+                if (summary.isBlank()) {
+                    Hint("Nothing summed up yet. Once today's chat gets long, $title folds the older part into a summary here.")
+                } else {
+                    SetupCard("📝") { Text(summary, color = Ink, modifier = Modifier.weight(1f)) }
+                }
+            }
+            item { SectionTitle("Diary") }
+            if (diary.isEmpty()) {
+                item { Hint("Your first diary entry shows up tomorrow.") }
+            }
+            items(diary) { entry ->
+                SetupCard("📔") {
+                    Column(Modifier.weight(1f)) {
+                        Text(entry.day, fontWeight = FontWeight.Bold, color = Ink)
+                        Text(entry.text, fontSize = 14.sp, color = Ink.copy(alpha = 0.8f))
+                    }
+                }
+            }
+            item {
+                TextButton(onClick = { confirmWipe = true }, modifier = Modifier.fillMaxWidth()) {
+                    Text("Forget everything", color = Color(0xFFD64545), fontWeight = FontWeight.Bold)
+                }
+            }
+        }
+        if (confirmWipe) {
+            AlertDialog(
+                onDismissRequest = { confirmWipe = false },
+                confirmButton = {
+                    TextButton(onClick = {
+                        memory.wipe()
+                        confirmWipe = false
+                        version++
+                    }) { Text("Forget", color = Color(0xFFD64545)) }
+                },
+                dismissButton = { TextButton(onClick = { confirmWipe = false }) { Text("Keep") } },
+                title = { Text("Forget everything?") },
+                text = { Text("$title forgets every fact, the whole diary and today's chat. This can't be undone.") },
+            )
+        }
+    }
+}
+
+@Composable
+private fun SectionTitle(text: String) {
+    Text(text, fontSize = 18.sp, fontWeight = FontWeight.Bold, color = Ink, modifier = Modifier.padding(top = 8.dp))
+}
+
+@Composable
+private fun Hint(text: String) {
+    Text(text, fontSize = 13.sp, color = Ink.copy(alpha = 0.6f))
 }
 
 @Composable
