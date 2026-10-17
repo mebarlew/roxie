@@ -10,6 +10,9 @@ class GatewayError(val code: Int, body: String) : Exception("HTTP $code: ${body.
     /** How long Google says to wait, from the RetryInfo in its 429 body: seconds for a per-minute cap, hours for the daily one. */
     val retryAfterMs: Long? = RETRY_DELAY.find(body)?.groupValues?.get(1)?.toDoubleOrNull()?.let { (it * 1000).toLong() }
 
+    /** The gateway's own per-app daily cap rather than Google's; its 429 says it "resets 00:00 UTC". */
+    val dailyCapHit = code == 429 && "resets 00:00 UTC" in body
+
     private companion object {
         val RETRY_DELAY = Regex("\"retryDelay\"\\s*:\\s*\"([\\d.]+)s\"")
     }

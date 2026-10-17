@@ -26,7 +26,10 @@ import android.view.WindowManager
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
+import java.net.SocketTimeoutException
+import java.text.DateFormat
 import java.util.Calendar
+import java.util.Date
 import java.util.concurrent.Executors
 
 /** Keeps the buddy floating over other apps and runs the tap → listen → answer loop. */
@@ -55,6 +58,9 @@ class BubbleService : Service() {
     private var waking = false
     private var canRetryListening = false
     private var happyUntil = 0L
+
+    /** Wall-clock time the brain's quota is back; until then the buddy dozes and taps don't ask the gateway. */
+    @Volatile private var tiredUntil = 0L
     private var lastAnswer = ""
     private var screen: ByteArray? = null
 
@@ -177,6 +183,10 @@ class BubbleService : Service() {
             typing = false
             return
         }
+        if (tired()) {
+            showTired()
+            return
+        }
         // Mid-greeting or mid-thinking, a tap cuts it off and listens right away.
         val fresh = mode == Mode.IDLE
         voice.stop()
@@ -187,6 +197,10 @@ class BubbleService : Service() {
 
     /** "Hey ducky": like a tap, but straight to listening so the rest of your sentence isn't talked over. */
     private fun onWakeWord() {
+        if (tired()) {
+            showTired()
+            return
+        }
         waking = true
         voice.stop()
         bubble.stopTyping()
@@ -309,15 +323,41 @@ class BubbleService : Service() {
                 brain.ask(question, shot)
             } catch (e: GatewayError) {
                 when (e.code) {
-                    429 -> "I'm all out of brain juice for now. Give me a little break and try again!"
+                    429 -> {
+                        tiredUntil = System.currentTimeMillis() + (e.retryAfterMs ?: if (e.dailyCapHit) untilUtcMidnight() else TIRED_DEFAULT_MS)
+                        tiredLine()
+                    }
                     401, 403 -> "My key to the brain isn't working. The app needs a new gateway key."
+                    // The gateway already retried Google's 5xx three times, so Google is struggling.
+                    in 500..599 -> "My brain is swamped. Try again in a minute?"
                     else -> "My brain hiccuped (error ${e.code}). Try again?"
                 }
+            } catch (e: SocketTimeoutException) {
+                "My brain is taking too long. Try again in a minute?"
             } catch (e: Exception) {
                 "I can't reach my brain right now. Is the internet on?"
             }
             main.post { if (mode == Mode.THINKING) showAnswer(answer) }
         }
+    }
+
+    private fun tired() = System.currentTimeMillis() < tiredUntil
+
+    private fun tiredLine() =
+        "I'm worn out. Back at ${DateFormat.getTimeInstance(DateFormat.SHORT).format(Date(tiredUntil))}!"
+
+    private fun showTired() {
+        voice.stop()
+        bubble.stopTyping()
+        typing = false
+        mode = Mode.IDLE
+        showBubble(tiredLine())
+    }
+
+    /** The gateway's cap resets at 00:00 UTC, and Unix time counts every day as exactly 86,400 s. */
+    private fun untilUtcMidnight(): Long {
+        val now = System.currentTimeMillis()
+        return (now / DAY_MS + 1) * DAY_MS - now
     }
 
     private fun showAnswer(answer: String) {
@@ -395,6 +435,7 @@ class BubbleService : Service() {
         speaking() || typing -> Anim.TALKING
         mode == Mode.LISTENING -> Anim.LISTENING
         mode == Mode.THINKING -> Anim.THINKING
+        tired() -> Anim.SLEEPY
         SystemClock.uptimeMillis() < happyUntil -> Anim.HAPPY
         mode == Mode.IDLE && !bubbleShown && isNight() -> Anim.SLEEPY
         else -> Anim.IDLE
@@ -421,5 +462,7 @@ class BubbleService : Service() {
         /** Long enough for the hidden speech bubble to leave the screen before the screenshot. */
         private const val BUBBLE_HIDE_MS = 80L
         private const val RETRY_LISTEN_MS = 400L
+        private const val TIRED_DEFAULT_MS = 5 * 60_000L
+        private const val DAY_MS = 86_400_000L
     }
 }
