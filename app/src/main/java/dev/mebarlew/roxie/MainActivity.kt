@@ -239,14 +239,22 @@ private fun SetupScreen(
                     onPermission(Manifest.permission.POST_NOTIFICATIONS)
                 }
             }
+            // A greyed-out button alone doesn't say what's missing, so name the first thing to do.
+            val missing = when {
+                name.isBlank() -> "Tell $title your name first"
+                !overlayOk -> "Allow \"Float over your apps\" first"
+                !micOk -> "Allow \"Hear you\" first"
+                else -> null
+            }
             Button(
                 onClick = onWake,
-                enabled = overlayOk && micOk && name.isNotBlank(),
+                enabled = missing == null,
                 shape = RoundedCornerShape(20.dp),
                 modifier = Modifier.fillMaxWidth().height(56.dp),
             ) {
                 Text("Wake $title up", fontSize = 18.sp, fontWeight = FontWeight.Bold)
             }
+            if (missing != null) Text(missing, fontSize = 13.sp, color = Ink.copy(alpha = 0.6f))
             TextButton(onClick = onSleep) { Text("Put $title to sleep", color = Ink.copy(alpha = 0.6f)) }
         }
     }
