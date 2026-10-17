@@ -23,7 +23,7 @@
         android:label="Rubber Duck Assistant"
         android:roundIcon="@mipmap/ic_launcher"
         android:supportsRtl="true"
-        android:theme="@android:style/Theme.Material.Light.NoActionBar">
+        android:theme="@style/Theme.RubberDuck">
 
         <activity
             android:name=".MainActivity"

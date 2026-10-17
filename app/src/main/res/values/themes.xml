@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources xmlns:tools="http://schemas.android.com/tools">
+    <!--
+        A dark base theme on purpose: Android's "expanded dark theme" inverts apps whose theme is
+        light, which turned the white bubble black. Every screen paints its own candy colours.
+    -->
+    <style name="Theme.RubberDuck" parent="@android:style/Theme.Material.NoActionBar">
+        <item name="android:isLightTheme" tools:targetApi="29">false</item>
+    </style>
+</resources>

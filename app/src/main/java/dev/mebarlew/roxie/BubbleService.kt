@@ -48,6 +48,7 @@ class BubbleService : Service() {
     private var typing = false
     private var dragging = false
     private var waking = false
+    private var canRetryListening = false
     private var happyUntil = 0L
     private var lastAnswer = ""
     private var screen: ByteArray? = null
@@ -211,7 +212,7 @@ class BubbleService : Service() {
         voice.speak(line) { if (mode == Mode.GREETING) startListening() }
     }
 
-    private fun startListening() {
+    private fun startListening(retry: Boolean = true) {
         waking = false
         // Only one recognizer can have the mic.
         wake.listening = false
@@ -220,8 +221,11 @@ class BubbleService : Service() {
             showBubble("I can't find a speech recognizer on this phone, so I can't hear you yet.")
             return
         }
-        val r = recognizer ?: SpeechRecognizer.createSpeechRecognizer(this).also { recognizer = it }
+        // A fresh recognizer per session: a reused one can fail with ERROR_CLIENT after a cancel.
+        recognizer?.destroy()
+        val r = SpeechRecognizer.createSpeechRecognizer(this).also { recognizer = it }
         r.setRecognitionListener(listener)
+        canRetryListening = retry
         mode = Mode.LISTENING
         showBubble("🎤 I'm listening…", animate = false)
         r.startListening(
@@ -257,6 +261,14 @@ class BubbleService : Service() {
 
         override fun onError(error: Int) {
             if (mode != Mode.LISTENING) return
+            val flaky = error == SpeechRecognizer.ERROR_CLIENT ||
+                (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S && error == SpeechRecognizer.ERROR_SERVER_DISCONNECTED)
+            if (flaky && canRetryListening) {
+                // Google's recognizer service sometimes isn't ready right after another one let go of the mic.
+                canRetryListening = false
+                main.postDelayed({ if (mode == Mode.LISTENING) startListening(retry = false) }, RETRY_LISTEN_MS)
+                return
+            }
             mode = Mode.IDLE
             showBubble(
                 when (error) {
@@ -389,5 +401,6 @@ class BubbleService : Service() {
 
         /** Long enough for the hidden speech bubble to leave the screen before the screenshot. */
         private const val BUBBLE_HIDE_MS = 80L
+        private const val RETRY_LISTEN_MS = 400L
     }
 }

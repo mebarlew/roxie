@@ -9,7 +9,6 @@ import android.graphics.Path
 import android.graphics.PixelFormat
 import android.graphics.RectF
 import android.graphics.drawable.Drawable
-import android.os.Build
 import android.os.Handler
 import android.os.Looper
 import android.text.SpannableString
@@ -25,11 +24,6 @@ import kotlin.math.hypot
 import kotlin.math.roundToInt
 
 val INK = Color.rgb(52, 40, 92)
-
-/** Phones with "dark theme for all apps" would invert the white disc and bubble; the candy look stays as drawn. */
-fun keepColors(view: View) {
-    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) view.isForceDarkAllowed = false
-}
 
 /** The floating buddy disc. Plays 100 ms frame animations; drag to move, tap to talk. */
 class BuddyView(
@@ -97,10 +91,6 @@ class BuddyView(
     }
 
     val size: Int get() = DISC * pixel
-
-    init {
-        keepColors(this)
-    }
 
     override fun onAttachedToWindow() {
         super.onAttachedToWindow()
@@ -270,7 +260,6 @@ class SpeechBubbleView(
         }
 
     init {
-        keepColors(this)
         orientation = VERTICAL
         background = shape
         tailOnLeft = true
