@@ -1,8 +1,12 @@
-"""Buddies: duck, cat, frog and bunny next to Roxie. 64x64, drawn from shapes like roxie_hd.py.
+"""Buddies: Sudo the duck, cat, frog and bunny. 64x64, drawn from shapes so every frame stays consistent.
 
+A frame is a set of part states (eyes, mouth, ears) plus whole-body motion (bob, squash) and an
+effect (Zzz, sparkles, thought dots, sound waves, sweat). Animations are lists of 100 ms frames.
 Every buddy wears a bow in the user's candy colour, so the colour picker works for all of them.
-Poses only change the eyes and mouth, same seven as Roxie.
 """
+
+from dataclasses import dataclass
+from functools import lru_cache
 
 from PIL import Image, ImageDraw
 
@@ -10,6 +14,7 @@ import roxie_hd
 import sprite as base
 
 SIZE = 64
+STEP_MS = 100
 
 INK = roxie_hd.PAL["outline"]
 WHITE = (255, 255, 255)
@@ -27,8 +32,15 @@ PAL = {
               "inner": (255, 186, 206), "nose": (238, 112, 146)},
 }
 
-EYES = roxie_hd.EYES
-MOUTHS = roxie_hd.MOUTHS
+
+@dataclass(frozen=True)
+class Frame:
+    eyes: str = "open"  # open, closed, half, happy, sleepy, up, left, right, squint
+    mouth: str = "smile"  # smile, flat, o, talk1, talk2, open_smile
+    ears: str = "rest"  # rest, perk, wiggleL, wiggleR, droop (tuft, ears or eye bumps)
+    dy: int = 0  # bob in sprite pixels, negative is up
+    squash: float = 0.0  # >0 squashed flat, <0 stretched tall
+    fx: str = ""  # zzz0-5, sparkle0-1, dots1-3, waves0-1, sweat
 
 
 def mirror(pts):
@@ -43,21 +55,29 @@ def head(d, box, p):
     d.ellipse((x0 + 7, y0 + 5, x0 + 14, y0 + 10), fill=p["light"])
 
 
-def eye(d, cx, cy, state, sclera=False):
+def eye(d, cx, cy, state, side, lid, sclera=False):
+    """side is -1 for the left eye and 1 for the right; lid is the colour around the eye."""
     if state == "closed":
         d.line([(cx - 3, cy + 1), (cx + 3, cy + 1)], fill=INK, width=2)
     elif state == "happy":
         d.arc((cx - 4, cy - 2, cx + 4, cy + 6), 200, 340, fill=INK, width=2)
     elif state == "sleepy":
         d.arc((cx - 4, cy - 5, cx + 4, cy + 3), 20, 160, fill=INK, width=2)
+    elif state == "squint":
+        tip, back = cx - 2 * side, cx + 2 * side
+        d.line([(back, cy - 3), (tip, cy), (back, cy + 3)], fill=INK, width=2)
     else:
+        r = 6 if sclera else 4
         if sclera:
-            d.ellipse((cx - 6, cy - 6, cx + 6, cy + 6), fill=WHITE, outline=INK)
-        dx, dy = (1, -2) if state == "up" else (0, 0)
+            d.ellipse((cx - r, cy - r, cx + r, cy + r), fill=WHITE, outline=INK)
+        dx, dy = {"up": (1, -2), "left": (-2, 0), "right": (2, 0)}.get(state, (0, 0))
         x, y = cx + dx, cy + dy
         d.ellipse((x - 3, y - 4, x + 3, y + 4), fill=INK)
         d.rectangle((x - 2, y - 3, x - 1, y - 2), fill=WHITE)
         d.point((x + 1, y + 2), fill=WHITE)
+        if state == "half":
+            d.rectangle((cx - r - 1, cy - r - 1, cx + r + 1, cy - 1), fill=lid)
+            d.line([(cx - r, cy - 1), (cx + r, cy - 1)], fill=INK, width=2)
 
 
 def blush(d, y, left, right):
@@ -73,52 +93,66 @@ def bow(d, cx, cy, v):
     d.rectangle((cx - 1, cy - 2, cx + 1, cy + 2), fill=v["hat_shade"], outline=INK)
 
 
-def duck(d, pose, v):
+def eyes(d, left, right, y, state, lid, sclera=False):
+    eye(d, left, y, state, -1, lid, sclera)
+    eye(d, right, y, state, 1, lid, sclera)
+
+
+TUFT = {"rest": [(24, 5), (33, 2), (42, 6)], "perk": [(24, 3), (33, 0), (42, 4)],
+        "wiggleL": [(21, 6), (30, 2), (39, 5)], "wiggleR": [(27, 5), (36, 2), (45, 6)],
+        "droop": [(19, 11), (33, 7), (47, 11)]}
+
+
+def duck(d, f, v):
     p = PAL["duck"]
-    for pts in ([(29, 16), (24, 5), (33, 13)], [(31, 15), (33, 2), (36, 15)], [(35, 16), (42, 6), (38, 16)]):
-        d.polygon(pts, fill=p["body"])
+    bases = [((29, 16), (33, 13)), ((31, 15), (36, 15)), ((35, 16), (38, 16))]
+    for (a, b), tip in zip(bases, TUFT[f.ears]):
+        d.polygon([a, tip, b], fill=p["body"])
     head(d, (9, 13, 55, 58), p)
     bow(d, 46, 19, v)
-    eye(d, 23, 33, EYES[pose])
-    eye(d, 41, 33, EYES[pose])
+    eyes(d, 23, 41, 33, f.eyes, p["body"])
     blush(d, 40, 11, 46)
-    mouth = MOUTHS[pose]
-    if mouth in ("talk", "open_smile", "o"):
-        small = mouth == "o"
-        d.ellipse((27 + small * 2, 40, 37 - small * 2, 49 - small * 2), fill=MOUTH)
-        if mouth == "open_smile":
+    open_by = {"talk2": 0, "open_smile": 0, "talk1": 1, "o": 2}
+    if f.mouth in open_by:
+        k = open_by[f.mouth]
+        d.ellipse((27 + k, 40, 37 - k, 49 - k), fill=MOUTH)
+        if f.mouth == "open_smile":
             d.ellipse((29, 44, 35, 48), fill=TONGUE)
-        d.chord((25 + small * 2, 42, 39 - small * 2, 51 - small * 2), 0, 180, fill=p["beak_shade"], outline=INK)
+        d.chord((25 + k, 42, 39 - k, 51 - k), 0, 180, fill=p["beak_shade"], outline=INK)
         d.ellipse((24, 35, 40, 43), fill=p["beak"], outline=INK)
     else:
         d.ellipse((24, 37, 40, 47), fill=p["beak"], outline=INK)
-        d.line([(26, 42), (38, 42)] if mouth == "flat" else [(26, 41), (32, 43), (38, 41)], fill=p["beak_shade"])
+        d.line([(26, 42), (38, 42)] if f.mouth == "flat" else [(26, 41), (32, 43), (38, 41)], fill=p["beak_shade"])
     d.line([(28, 38), (31, 38)], fill=p["light"])
 
 
-def cat(d, pose, v):
+# Ear tip per state, left ear in left-side coordinates; the right ear mirrors its own entry.
+CAT_TIP = {"rest": ((12, 5), (12, 5)), "perk": ((12, 2), (12, 2)), "wiggleL": ((8, 8), (12, 5)),
+           "wiggleR": ((12, 5), (8, 8)), "droop": ((6, 14), (6, 14))}
+
+
+def cat(d, f, v):
     p = PAL["cat"]
-    ear = [(10, 28), (12, 5), (29, 17)]
-    inner = [(14, 23), (15, 11), (24, 18)]
-    for pts in (ear, mirror(ear)):
-        d.polygon(pts, fill=p["body"])
-    for pts in (inner, mirror(inner)):
-        d.polygon(pts, fill=p["inner"])
+    for tip, flip in zip(CAT_TIP[f.ears], (False, True)):
+        ear = [(10, 28), tip, (29, 17)]
+        inner = [(14, 23), (tip[0] + 3, tip[1] + 6), (24, 18)]
+        d.polygon(mirror(ear) if flip else ear, fill=p["body"])
+        d.polygon(mirror(inner) if flip else inner, fill=p["inner"])
     head(d, (7, 14, 57, 56), p)
     for x0, x1 in ((27, 28), (32, 32), (37, 36)):
         d.line([(x0, 15), (x1, 20)], fill=p["shade"], width=2)
     bow(d, 47, 16, v)
-    eye(d, 22, 34, EYES[pose])
-    eye(d, 42, 34, EYES[pose])
+    eyes(d, 22, 42, 34, f.eyes, p["body"])
     blush(d, 40, 11, 47)
     d.polygon([(30, 39), (34, 39), (32, 41)], fill=p["nose"])
-    mouth = MOUTHS[pose]
-    if mouth in ("talk", "open_smile"):
+    if f.mouth in ("talk2", "open_smile"):
         d.chord((27, 41, 37, 51), 0, 180, fill=MOUTH)
         d.ellipse((30, 45, 34, 49), fill=TONGUE)
-    elif mouth == "o":
+    elif f.mouth == "talk1":
+        d.chord((29, 41, 35, 48), 0, 180, fill=MOUTH)
+    elif f.mouth == "o":
         d.ellipse((30, 43, 34, 47), fill=MOUTH)
-    if mouth == "flat":
+    if f.mouth == "flat":
         d.line([(30, 43), (34, 43)], fill=INK)
     else:
         d.arc((27, 39, 32, 44), 20, 160, fill=INK)
@@ -131,52 +165,75 @@ def cat_whiskers(d):
         d.line([(51, y0), (59, y1)], fill=INK)
 
 
-def frog(d, pose, v):
+# Eye bump lift (left, right) per state; negative is up.
+FROG_LIFT = {"rest": (0, 0), "perk": (-2, -2), "wiggleL": (-2, 0), "wiggleR": (0, -2), "droop": (2, 2)}
+
+
+def frog(d, f, v):
     p = PAL["frog"]
-    state = EYES[pose]
-    open_eye = state in ("open", "up")
-    for box in ((8, 7, 30, 29), (33, 7, 55, 29)):
+    sclera = f.eyes in ("open", "up", "left", "right", "half")
+    bumps = [(8, 7 + dy, 30, 29 + dy) if i == 0 else (33, 7 + dy, 55, 29 + dy)
+             for i, dy in enumerate(FROG_LIFT[f.ears])]
+    for box in bumps:
         d.ellipse(box, fill=p["body"])
     head(d, (5, 17, 58, 57), p)
-    for box in ((8, 7, 30, 29), (33, 7, 55, 29)):
+    for box in bumps:
         d.chord(box, 180, 360, fill=p["body"])
     bow(d, 31, 13, v)
-    eye(d, 19, 19, state, sclera=open_eye)
-    eye(d, 44, 19, state, sclera=open_eye)
+    (l, r) = FROG_LIFT[f.ears]
+    eye(d, 19, 19 + l, f.eyes, -1, p["body"], sclera)
+    eye(d, 44, 19 + r, f.eyes, 1, p["body"], sclera)
     blush(d, 40, 9, 48)
     d.point((29, 35), fill=p["shade"])
     d.point((34, 35), fill=p["shade"])
-    mouth = MOUTHS[pose]
-    if mouth in ("talk", "open_smile"):
-        wide = mouth == "open_smile"
-        d.chord((20 - wide * 3, 36, 43 + wide * 3, 54), 0, 180, fill=MOUTH, outline=INK)
+    if f.mouth in ("talk2", "open_smile"):
+        wide = 3 if f.mouth == "open_smile" else 0
+        d.chord((20 - wide, 36, 43 + wide, 54), 0, 180, fill=MOUTH, outline=INK)
         d.ellipse((27, 46, 36, 52), fill=TONGUE)
-    elif mouth == "o":
+    elif f.mouth == "talk1":
+        d.chord((23, 38, 40, 49), 0, 180, fill=MOUTH, outline=INK)
+    elif f.mouth == "o":
         d.ellipse((28, 41, 35, 48), fill=MOUTH, outline=INK)
-    elif mouth == "flat":
+    elif f.mouth == "flat":
         d.line([(24, 43), (39, 43)], fill=INK)
     else:
         d.arc((16, 30, 47, 46), 25, 155, fill=INK)
 
 
-def bunny(d, pose, v):
+def bunny_ear(d, box, p, flop):
+    """flop folds the top of the ear over to the outside (-1 left, 1 right, 0 upright)."""
+    x0, y0, x1, y1 = box
+    if flop:
+        y0 = 14
+    d.ellipse((x0, y0, x1, y1), fill=p["body"])
+    d.ellipse((x0 + 4, y0 + 5, x1 - 4, y1 - 5), fill=p["inner"])
+    if flop:
+        fx0 = x0 - 11 if flop < 0 else x1 - 5
+        d.ellipse((fx0, 9, fx0 + 16, 19), fill=p["body"])
+        d.ellipse((fx0 + 3, 12, fx0 + 13, 16), fill=p["inner"])
+
+
+def bunny(d, f, v):
     p = PAL["bunny"]
-    for box, inner in (((14, 0, 27, 34), (18, 5, 23, 29)), ((36, 0, 49, 34), (40, 5, 45, 29))):
-        d.ellipse(box, fill=p["body"])
-        d.ellipse(inner, fill=p["inner"])
+    top = 0 if f.ears == "perk" else 3
+    flop_l = f.ears in ("wiggleL", "droop")
+    flop_r = f.ears in ("wiggleR", "droop")
+    bunny_ear(d, (14, top, 27, 34), p, -1 if flop_l else 0)
+    bunny_ear(d, (36, top, 49, 34), p, 1 if flop_r else 0)
     head(d, (10, 21, 54, 61), p)
     bow(d, 22, 25, v)
-    eye(d, 23, 40, EYES[pose])
-    eye(d, 41, 40, EYES[pose])
+    eyes(d, 23, 41, 40, f.eyes, p["body"])
     blush(d, 46, 12, 45)
     d.ellipse((30, 45, 34, 48), fill=p["nose"])
-    mouth = MOUTHS[pose]
-    if mouth in ("talk", "open_smile"):
+    if f.mouth in ("talk2", "open_smile"):
         d.chord((28, 46, 36, 56), 0, 180, fill=MOUTH)
         d.rectangle((31, 51, 33, 53), fill=WHITE)
-    elif mouth == "o":
+    elif f.mouth == "talk1":
+        d.chord((29, 47, 35, 53), 0, 180, fill=MOUTH)
+        d.rectangle((31, 50, 33, 51), fill=WHITE)
+    elif f.mouth == "o":
         d.ellipse((30, 50, 34, 54), fill=MOUTH)
-    elif mouth == "flat":
+    elif f.mouth == "flat":
         d.line([(30, 51), (34, 51)], fill=INK)
     else:
         d.line([(32, 48), (32, 49)], fill=INK)
@@ -185,27 +242,152 @@ def bunny(d, pose, v):
 
 
 DRAW = {"duck": duck, "cat": cat, "frog": frog, "bunny": bunny}
-BUDDIES = ["duck", "cat", "frog", "bunny", "roxie"]
+BUDDIES = ["duck", "cat", "frog", "bunny"]
+NAMES = {"duck": "Sudo", "cat": "Cat", "frog": "Frog", "bunny": "Bunny"}
 
 
-def buddy(name, pose="idle", variant="Blueberry"):
-    if name == "roxie":
-        return roxie_hd.roxie(pose, variant)
+@lru_cache(maxsize=None)
+def parts(name, eyes_state, mouth, ears, variant):
     img = Image.new("RGBA", (SIZE, SIZE), (0, 0, 0, 0))
     d = ImageDraw.Draw(img)
-    DRAW[name](d, pose, base.VARIANTS[variant])
+    DRAW[name](d, Frame(eyes_state, mouth, ears), base.VARIANTS[variant])
     img = roxie_hd.outline(img)
     if name == "cat":
         cat_whiskers(ImageDraw.Draw(img))
     return img
 
 
-def big(img, px=192):
-    return img.resize((px, px), Image.NEAREST)
+def buddy(name, frame=Frame(), variant="Blueberry"):
+    return parts(name, frame.eyes, frame.mouth, frame.ears, variant)
+
+
+POSES = {
+    "idle": Frame(),
+    "blink": Frame(eyes="closed"),
+    "talking": Frame(mouth="talk2"),
+    "listening": Frame(mouth="o", ears="perk"),
+    "thinking": Frame(eyes="up", mouth="flat"),
+    "sleepy": Frame(eyes="half", mouth="flat", ears="droop"),
+    "happy": Frame(eyes="happy", mouth="open_smile"),
+}
+
+
+def run(*parts_):
+    """Expand (frame, steps) pairs into a list of 100 ms frames."""
+    return [f for f, n in parts_ for _ in range(n)]
+
+
+F = Frame
+LISTEN = dict(mouth="o", ears="perk")
+THINK = dict(mouth="flat")
+HAPPY = dict(eyes="happy", mouth="open_smile")
+SLEEP = dict(mouth="flat", ears="droop")
+
+ANIMS = {
+    "idle": run(
+        (F(), 4), (F(dy=-1), 4), (F(ears="wiggleL"), 2), (F(ears="wiggleR"), 2), (F(), 2),
+        (F(dy=-1), 2), (F(eyes="closed", dy=-1), 1), (F(dy=-1), 2), (F(eyes="left"), 3),
+        (F(eyes="right"), 3), (F(), 2)),
+    "listening": run(*[(F(fx=f"waves{i % 2}", dy=-(i % 2), **LISTEN), 3) for i in range(4)],
+                     (F(eyes="closed", fx="waves0", **LISTEN), 1), (F(fx="waves1", **LISTEN), 3)),
+    "thinking": run(
+        (F(eyes="up", fx="dots1", **THINK), 4), (F(eyes="left", fx="dots2", dy=-1, **THINK), 4),
+        (F(eyes="right", fx="dots3", dy=-1, ears="wiggleR", **THINK), 4),
+        (F(eyes="up", fx="dots1", **THINK), 4), (F(eyes="left", fx="dots2", **THINK), 4),
+        (F(eyes="up", fx="dots3", ears="wiggleL", **THINK), 4)),
+    "talking": run(*[(F(mouth=m, dy=-(i // 4 % 2), eyes="closed" if i == 9 else "open"), 1)
+                     for i, m in enumerate(["talk1", "talk2", "talk1", "smile", "talk2", "talk1", "talk2",
+                                            "smile", "talk1", "talk2", "o", "talk2", "talk1", "smile",
+                                            "talk2", "talk1", "talk2", "talk1", "smile", "smile"])]),
+    "happy": run(*[x for _ in range(2) for x in (
+        (F(squash=0.15, **HAPPY), 1), (F(squash=-0.1, dy=-3, fx="sparkle0", **HAPPY), 1),
+        (F(dy=-5, fx="sparkle1", ears="perk", **HAPPY), 2), (F(dy=-3, fx="sparkle0", **HAPPY), 1),
+        (F(squash=0.12, fx="sparkle1", **HAPPY), 1), (F(fx="sparkle0", **HAPPY), 2))]),
+    "sleepy": run(
+        (F(eyes="half", fx="zzz0", **SLEEP), 3), (F(eyes="half", dy=1, fx="zzz1", **SLEEP), 3),
+        (F(eyes="sleepy", dy=2, fx="zzz2", **SLEEP), 3), (F(eyes="sleepy", dy=2, fx="zzz3", **SLEEP), 3),
+        (F(eyes="sleepy", dy=1, fx="zzz4", **SLEEP), 3), (F(eyes="sleepy", fx="zzz5", **SLEEP), 3),
+        (F(eyes="half", fx="zzz0", **SLEEP), 3), (F(eyes="half", dy=1, fx="zzz1", **SLEEP), 3)),
+    "dragged": run(*[(F(eyes="squint", mouth="o", ears="droop" if i % 2 else "perk",
+                        squash=(0.14 if i % 2 else -0.12), fx="sweat"), 2) for i in range(6)]),
+}
+
+CAPTIONS = {"idle": "just hanging out", "listening": "you tapped, all ears", "thinking": "waiting on the AI",
+            "talking": "mouth follows the voice", "happy": "you said thanks", "sleepy": "late at night",
+            "dragged": "you're moving it around"}
+
+SPARKLE = ["..X..", "..X..", "XXXXX", "..X..", "..X.."]
+DROP = ["..X..", "..X..", ".XXX.", ".XWX.", "XXWXX", "XXXXX", ".XXX."]
+
+
+def effect(img, fx, x, y, scale):
+    """Draw an effect around a sprite whose top-left screen position is (x, y)."""
+    d = ImageDraw.Draw(img)
+    s = SIZE * scale
+    if fx.startswith("zzz"):
+        n = int(fx[3:])
+        g = base.glyph(base.ZZZ, 3, {"K": (120, 110, 200)})
+        img.alpha_composite(g, (x + s - 18, y + 6 - n * 4))
+    elif fx.startswith("sparkle"):
+        spots = [(-10, 20), (s - 4, 6), (s + 2, s - 60), (-14, s - 70)]
+        for i, (sx, sy) in enumerate(spots):
+            if (i + int(fx[7:])) % 2 == 0:
+                g = base.glyph(SPARKLE, 4, {"X": (255, 200, 80) if i % 2 else (255, 140, 190)})
+                img.alpha_composite(g, (x + sx, y + sy))
+    elif fx.startswith("dots"):
+        for i in range(int(fx[4:])):
+            cx, cy = x + s - 30 + i * 18, y + 4 - i * 8
+            d.ellipse((cx - 6, cy - 6, cx + 6, cy + 6), fill=(236, 230, 255), outline=base.INK, width=2)
+    elif fx.startswith("waves"):
+        cx, cy = x + s - 10, y + s // 2
+        for i in range(int(fx[5:]) + 1):
+            r = 18 + i * 14
+            d.arc((cx - r, cy - r, cx + r, cy + r), -45, 45, fill=(150, 130, 220), width=5)
+    elif fx == "sweat":
+        img.alpha_composite(base.glyph(DROP, 3, {"X": (120, 190, 255), "W": WHITE}), (x + s - 30, y + 8))
+
+
+def place(img, spr, f, x, y, scale):
+    """Composite a sprite at (x, y) with the frame's bob and squash, feet anchored."""
+    s = SIZE * scale
+    w, h = round(s * (1 + f.squash)), round(s * (1 - f.squash))
+    big = spr.resize((w, h), Image.NEAREST)
+    img.alpha_composite(big, (x + (s - w) // 2, y + s - h + f.dy * scale))
+    if f.fx:
+        effect(img, f.fx, x, y + f.dy * scale, scale)
+
+
+def gif(path):
+    scale, cw, ch, gap = 3, 240, 250, 16
+    width = len(BUDDIES) * cw + (len(BUDDIES) + 1) * gap
+    top = 110
+    height = top + ch + 60
+    bg = Image.new("RGBA", (width, height), (246, 238, 252, 255))
+    d = ImageDraw.Draw(bg)
+    label = base.ImageFont.truetype(base.FONT_DIR + "LiberationSans-Bold.ttf", 26)
+    title = base.ImageFont.truetype(base.PIXEL_FONT, 48)
+    small = base.ImageFont.truetype(base.FONT_DIR + "LiberationSans-Regular.ttf", 22)
+    for i, name in enumerate(BUDDIES):
+        x = gap + i * (cw + gap)
+        d.rounded_rectangle((x, top, x + cw, top + ch), 28, fill=WHITE, outline=(226, 218, 240), width=2)
+        base.centered_text(d, x + cw / 2, top + ch + 14, NAMES[name], label)
+    frames = []
+    for state, steps in ANIMS.items():
+        for f in steps:
+            img = bg.copy()
+            d = ImageDraw.Draw(img)
+            base.centered_text(d, width / 2, 14, state, title)
+            base.centered_text(d, width / 2, 68, CAPTIONS[state], small, (120, 100, 160))
+            for i, name in enumerate(BUDDIES):
+                x = gap + i * (cw + gap) + (cw - SIZE * scale) // 2
+                place(img, buddy(name, f), f, x, top + 40, scale)
+            frames.append(img.convert("RGB"))
+    frames[0].save(path, save_all=True, append_images=frames[1:], duration=STEP_MS, loop=0)
+    return len(frames)
 
 
 def sheet(path):
-    poses = list(EYES)
+    poses = list(POSES)
     label_w, cw, ch, gap = 170, 210, 212, 18
     width = label_w + len(poses) * cw + (len(poses) + 1) * gap
     rows_top = 210
@@ -217,7 +399,7 @@ def sheet(path):
     label = base.ImageFont.truetype(base.FONT_DIR + "LiberationSans-Bold.ttf", 26)
     small = base.ImageFont.truetype(base.FONT_DIR + "LiberationSans-Regular.ttf", 22)
     base.centered_text(d, width / 2, 24, "Pick your buddy", title)
-    base.centered_text(d, width / 2, 98, "duck (default) · cat · frog · bunny · Roxie · the bow takes your colour",
+    base.centered_text(d, width / 2, 98, "Sudo the duck (default) · cat · frog · bunny · the bow takes your colour",
                        small, (120, 100, 160))
 
     def col_x(i):
@@ -228,32 +410,24 @@ def sheet(path):
 
     for r, name in enumerate(BUDDIES):
         y = rows_top + r * (ch + gap)
-        d.text((gap + 6, y + ch / 2 - 16), name.capitalize(), font=label, fill=base.INK)
+        d.text((gap + 6, y + ch / 2 - 16), NAMES[name], font=label, fill=base.INK)
         if r == 0:
             d.text((gap + 6, y + ch / 2 + 16), "default", font=small, fill=(120, 100, 160))
         for i, p in enumerate(poses):
             x = col_x(i)
             base.card(img, (x, y, x + cw, y + ch))
-            spr = big(buddy(name, p))
+            spr = buddy(name, POSES[p]).resize((192, 192), Image.NEAREST)
             img.alpha_composite(spr, (x + (cw - spr.width) // 2, y + 10))
-            if p == "thinking":
-                g = base.glyph(base.THOUGHT, 4, {"O": base.INK, "W": (236, 230, 255), "K": base.INK})
-                img.alpha_composite(g, (x + cw - g.width - 6, y + 6))
-            if p == "sleepy":
-                g = base.glyph(base.ZZZ, 3, {"K": (120, 110, 200)})
-                img.alpha_composite(g, (x + cw - g.width - 8, y + 8))
 
     y = colour_top
     for i, variant in enumerate(base.VARIANTS):
         x = col_x(i)
         base.card(img, (x, y, x + cw, y + 260))
-        spr = big(buddy("duck", "happy", variant))
+        spr = buddy("duck", POSES["happy"], variant).resize((192, 192), Image.NEAREST)
         img.alpha_composite(spr, (x + (cw - spr.width) // 2, y + 8))
         base.centered_text(ImageDraw.Draw(img), x + cw / 2, y + 214, variant, label)
 
-    # Real bubble size: every buddy at 1x in a floating disc.
-    x0 = col_x(5)
-    x1 = col_x(6) + cw
+    x0, x1 = col_x(5), col_x(6) + cw
     base.card(img, (x0, y, x1, y + 260))
     base.centered_text(ImageDraw.Draw(img), (x0 + x1) / 2, y + 22, "bubble size", label)
     disc, step = 76, (x1 - x0 - 20) // len(BUDDIES)
@@ -261,10 +435,7 @@ def sheet(path):
         bx = x0 + 10 + i * step + (step - disc) // 2
         by = y + 100
         ImageDraw.Draw(img).ellipse((bx, by, bx + disc, by + disc), fill=WHITE, outline=(200, 190, 235), width=3)
-        face = buddy(name)
-        if face.width != SIZE:
-            face = face.resize((SIZE, SIZE), Image.LANCZOS)
-        img.alpha_composite(face, (bx + (disc - SIZE) // 2, by + (disc - SIZE) // 2 + 2))
+        img.alpha_composite(buddy(name), (bx + (disc - SIZE) // 2, by + (disc - SIZE) // 2 + 2))
     img.convert("RGB").save(path)
 
 
@@ -312,5 +483,6 @@ if __name__ == "__main__":
     import sys
 
     sheet("/home/claw/assistant/outbox/roxie-buddies-sheet.png")
+    print(gif("/home/claw/assistant/outbox/buddies-animated.gif"), "frames")
     if len(sys.argv) > 1:
         icon(sys.argv[1])
