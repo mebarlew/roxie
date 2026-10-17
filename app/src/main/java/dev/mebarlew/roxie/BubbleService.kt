@@ -135,7 +135,7 @@ class BubbleService : Service() {
     override fun onCreate() {
         super.onCreate()
         prefs = Prefs(this)
-        brain = Brain(prefs)
+        brain = Brain(prefs, Memory.get(this))
         voice = Voice(this, prefs) { open ->
             mouthOpen = open
             if (open) lastMouthAt = SystemClock.uptimeMillis()
