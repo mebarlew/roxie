@@ -24,9 +24,8 @@ import android.view.View
 import android.view.WindowManager
 import java.util.Calendar
 import java.util.concurrent.Executors
-import kotlin.random.Random
 
-/** Keeps Roxie floating over other apps and runs the tap → listen → answer loop. */
+/** Keeps the buddy floating over other apps and runs the tap → listen → answer loop. */
 class BubbleService : Service() {
     private enum class Mode { IDLE, GREETING, LISTENING, THINKING, ANSWERING }
 
@@ -36,19 +35,18 @@ class BubbleService : Service() {
     private lateinit var prefs: Prefs
     private lateinit var brain: Brain
     private lateinit var voice: Voice
-    private lateinit var roxie: RoxieView
+    private lateinit var buddyView: BuddyView
     private lateinit var bubble: SpeechBubbleView
-    private lateinit var roxieParams: WindowManager.LayoutParams
+    private lateinit var buddyParams: WindowManager.LayoutParams
     private lateinit var bubbleParams: WindowManager.LayoutParams
     private var recognizer: SpeechRecognizer? = null
     private var mode = Mode.IDLE
     private var bubbleShown = false
     private var mouthOpen = false
+    private var lastMouthAt = 0L
     private var typing = false
-    private var typingTick = 0
+    private var dragging = false
     private var happyUntil = 0L
-    private var blinkUntil = 0L
-    private var nextBlink = 0L
     private var lastAnswer = ""
 
     override fun onBind(intent: Intent?): IBinder? = null
@@ -57,7 +55,10 @@ class BubbleService : Service() {
         super.onCreate()
         prefs = Prefs(this)
         brain = Brain(prefs)
-        voice = Voice(this) { mouthOpen = it }
+        voice = Voice(this) { open ->
+            mouthOpen = open
+            if (open) lastMouthAt = SystemClock.uptimeMillis()
+        }
         windows = getSystemService(Context.WINDOW_SERVICE) as WindowManager
         startInForeground()
         addOverlays()
@@ -77,7 +78,7 @@ class BubbleService : Service() {
         voice.shutdown()
         io.shutdownNow()
         windows.removeView(bubble)
-        windows.removeView(roxie)
+        windows.removeView(buddyView)
         super.onDestroy()
     }
 
@@ -94,12 +95,12 @@ class BubbleService : Service() {
         )
         val notification = Notification.Builder(this, CHANNEL)
             .setSmallIcon(R.drawable.ic_notification)
-            .setContentTitle("Roxie is hanging out")
-            .setContentText("Tap her bubble to talk")
+            .setContentTitle("${prefs.buddy.title} is hanging out")
+            .setContentText("Tap the bubble to talk")
             .setContentIntent(open)
             .addAction(
                 Notification.Action.Builder(
-                    Icon.createWithResource(this, R.drawable.ic_notification), "Put her to sleep", stop,
+                    Icon.createWithResource(this, R.drawable.ic_notification), "Put to sleep", stop,
                 ).build(),
             )
             .setOngoing(true)
@@ -121,9 +122,9 @@ class BubbleService : Service() {
 
     private fun addOverlays() {
         val screen = resources.displayMetrics
-        roxie = RoxieView(this, onTap = ::onRoxieTap, onDrag = ::onRoxieDrag)
-        val size = roxie.size
-        roxieParams = overlayParams(size, size).apply {
+        buddyView = BuddyView(this, onTap = ::onBuddyTap, onDrag = ::onBuddyDrag)
+        val size = buddyView.size
+        buddyParams = overlayParams(size, size).apply {
             x = if (prefs.bubbleX >= 0) prefs.bubbleX else screen.widthPixels - size - size / 4
             y = if (prefs.bubbleY >= 0) prefs.bubbleY else screen.heightPixels / 3
         }
@@ -131,22 +132,23 @@ class BubbleService : Service() {
         bubble.visibility = View.GONE
         bubbleParams = overlayParams(WindowManager.LayoutParams.WRAP_CONTENT, WindowManager.LayoutParams.WRAP_CONTENT)
         windows.addView(bubble, bubbleParams)
-        windows.addView(roxie, roxieParams)
+        windows.addView(buddyView, buddyParams)
     }
 
-    private fun onRoxieDrag(dx: Int, dy: Int, done: Boolean) {
+    private fun onBuddyDrag(dx: Int, dy: Int, done: Boolean) {
         val screen = resources.displayMetrics
-        roxieParams.x = (roxieParams.x + dx).coerceIn(0, screen.widthPixels - roxieParams.width)
-        roxieParams.y = (roxieParams.y + dy).coerceIn(0, screen.heightPixels - roxieParams.height)
-        windows.updateViewLayout(roxie, roxieParams)
+        dragging = !done
+        buddyParams.x = (buddyParams.x + dx).coerceIn(0, screen.widthPixels - buddyParams.width)
+        buddyParams.y = (buddyParams.y + dy).coerceIn(0, screen.heightPixels - buddyParams.height)
+        windows.updateViewLayout(buddyView, buddyParams)
         if (bubbleShown) positionBubble()
         if (done) {
-            prefs.bubbleX = roxieParams.x
-            prefs.bubbleY = roxieParams.y
+            prefs.bubbleX = buddyParams.x
+            prefs.bubbleY = buddyParams.y
         }
     }
 
-    private fun onRoxieTap() {
+    private fun onBuddyTap() {
         when (mode) {
             Mode.IDLE, Mode.ANSWERING -> greet()
             Mode.GREETING -> {
@@ -279,13 +281,13 @@ class BubbleService : Service() {
         positionBubble()
     }
 
-    /** Puts the bubble beside Roxie on the roomier side, tail pointing at her mouth. */
+    /** Puts the bubble beside the buddy on the roomier side, tail pointing at its mouth. */
     private fun positionBubble() {
         val screen = resources.displayMetrics
-        val size = roxieParams.width
+        val size = buddyParams.width
         val gap = (2 * screen.density).toInt()
-        val onRight = roxieParams.x + size / 2 > screen.widthPixels / 2
-        val room = if (onRight) roxieParams.x - gap else screen.widthPixels - roxieParams.x - size - gap
+        val onRight = buddyParams.x + size / 2 > screen.widthPixels / 2
+        val room = if (onRight) buddyParams.x - gap else screen.widthPixels - buddyParams.x - size - gap
         val maxWidth = room.coerceAtLeast((180 * screen.density).toInt())
         bubble.tailOnLeft = !onRight
         bubble.measure(
@@ -296,39 +298,36 @@ class BubbleService : Service() {
         val h = bubble.measuredHeight
         bubbleParams.width = w
         bubbleParams.height = h
-        bubbleParams.x = (if (onRight) roxieParams.x - w - gap else roxieParams.x + size + gap)
+        bubbleParams.x = (if (onRight) buddyParams.x - w - gap else buddyParams.x + size + gap)
             .coerceIn(0, (screen.widthPixels - w).coerceAtLeast(0))
-        bubbleParams.y = (roxieParams.y + (size * 0.62f).toInt() - bubble.tailY)
+        bubbleParams.y = (buddyParams.y + (size * 0.62f).toInt() - bubble.tailY)
             .coerceIn(0, (screen.heightPixels - h).coerceAtLeast(0))
         windows.updateViewLayout(bubble, bubbleParams)
     }
 
+    /** Picks the animation from the current state; the view plays it. Settings apply live. */
     private val animator = object : Runnable {
         override fun run() {
-            roxie.frame = Sprite.bitmap(currentPose())
-            val busy = mouthOpen || typing || mode != Mode.IDLE
-            main.postDelayed(this, if (busy) 50L else 100L)
+            buddyView.buddy = prefs.buddy
+            buddyView.ringColor = CANDY.getValue(prefs.color)
+            buddyView.lipSync = if (speaking()) mouthOpen else null
+            buddyView.anim = currentAnim()
+            main.postDelayed(this, 50L)
         }
     }
 
-    private fun currentPose(): Pose {
-        val now = SystemClock.uptimeMillis()
-        return when {
-            mouthOpen -> Pose.TALKING
-            typing -> if ((typingTick++ / 3) % 2 == 0) Pose.TALKING else Pose.IDLE
-            mode == Mode.LISTENING -> Pose.LISTENING
-            mode == Mode.THINKING -> Pose.THINKING
-            now < happyUntil -> Pose.HAPPY
-            mode == Mode.IDLE && !bubbleShown && isNight() -> Pose.SLEEPY
-            else -> {
-                if (now >= nextBlink) {
-                    blinkUntil = now + 140
-                    nextBlink = now + 2500 + Random.nextLong(3000)
-                }
-                if (now < blinkUntil) Pose.BLINK else Pose.IDLE
-            }
-        }
+    private fun currentAnim(): Anim = when {
+        dragging -> Anim.DRAGGED
+        speaking() || typing -> Anim.TALKING
+        mode == Mode.LISTENING -> Anim.LISTENING
+        mode == Mode.THINKING -> Anim.THINKING
+        SystemClock.uptimeMillis() < happyUntil -> Anim.HAPPY
+        mode == Mode.IDLE && !bubbleShown && isNight() -> Anim.SLEEPY
+        else -> Anim.IDLE
     }
+
+    /** Mid-sentence pauses close the mouth without leaving the talking animation. */
+    private fun speaking() = SystemClock.uptimeMillis() - lastMouthAt < SPEECH_GAP_MS
 
     private fun isNight(): Boolean {
         val hour = Calendar.getInstance().get(Calendar.HOUR_OF_DAY)
@@ -339,5 +338,6 @@ class BubbleService : Service() {
         const val ACTION_STOP = "dev.mebarlew.roxie.STOP"
         private const val CHANNEL = "roxie"
         private const val NOTIFICATION_ID = 1
+        private const val SPEECH_GAP_MS = 400L
     }
 }

@@ -5,8 +5,11 @@ effect (Zzz, sparkles, thought dots, sound waves, sweat). Animations are lists o
 The user's candy colour goes on the ring around the floating bubble, not on the buddies.
 """
 
+import json
+import shutil
 from dataclasses import dataclass
 from functools import lru_cache
+from pathlib import Path
 
 from PIL import Image, ImageDraw
 
@@ -333,6 +336,27 @@ CAPTIONS = {"idle": "just hanging out", "listening": "you tapped, all ears", "th
             "talking": "mouth follows the voice", "happy": "you said thanks", "sleepy": "late at night",
             "dragged": "you're moving it around"}
 
+# Frames the app picks itself for lip-sync, on top of the ones the animations use.
+LIP_SYNC = [Frame(mouth="talk1"), Frame(mouth="talk2"), Frame()]
+
+
+def key(f):
+    return f"{f.eyes}_{f.mouth}_{f.ears}"
+
+
+def export(root):
+    """Write every frame the app uses as a PNG, plus the animation timings, into the app's assets."""
+    shutil.rmtree(root, ignore_errors=True)
+    frames = {key(f): f for f in [*POSES.values(), *LIP_SYNC] + [f for steps in ANIMS.values() for f in steps]}
+    for name in BUDDIES:
+        (root / name).mkdir(parents=True)
+        for k, f in frames.items():
+            buddy(name, f).save(root / name / f"{k}.png", optimize=True)
+    anims = {state: [[key(f), f.dy, f.squash, f.fx] for f in steps] for state, steps in ANIMS.items()}
+    (root / "anims.json").write_text(json.dumps(anims, separators=(",", ":")))
+    return len(frames)
+
+
 SPARKLE = ["..X..", "..X..", "XXXXX", "..X..", "..X.."]
 DROP = ["..X..", "..X..", ".XXX.", ".XWX.", "XXWXX", "XXXXX", ".XXX."]
 
@@ -504,6 +528,7 @@ if __name__ == "__main__":
     import sys
 
     sheet("/home/claw/assistant/outbox/roxie-buddies-sheet.png")
-    print(gif("/home/claw/assistant/outbox/buddies-animated.gif"), "frames")
+    print(gif("/home/claw/assistant/outbox/buddies-animated.gif"), "gif frames")
+    print(export(Path(__file__).resolve().parent.parent / "app/src/main/assets/buddies"), "frames per buddy")
     if len(sys.argv) > 1:
         icon(sys.argv[1])

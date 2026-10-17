@@ -5,7 +5,7 @@ import org.json.JSONObject
 import java.text.DateFormat
 import java.util.Date
 
-/** Chat with Roxie. Keeps a short in-memory history; persistent memory comes later. */
+/** Chat with the buddy. Keeps a short in-memory history; persistent memory comes later. */
 class Brain(private val prefs: Prefs) {
     private val history = ArrayDeque<JSONObject>()
 
@@ -27,9 +27,10 @@ class Brain(private val prefs: Prefs) {
 
     private fun systemPrompt(): String {
         val name = prefs.name.ifBlank { "your human" }
+        val buddy = prefs.buddy
         val now = DateFormat.getDateTimeInstance(DateFormat.FULL, DateFormat.SHORT).format(Date())
         return """
-            You are Roxie, a sweet, bubbly pixel-art girl in a blue cat-ear beanie. You float over $name's phone screen as a tiny helper.
+            You are ${buddy.title}, ${buddy.vibe}. You float over $name's phone screen as a tiny pixel-art helper.
             Talk like a warm, playful best friend. Be genuinely helpful and honest.
             Keep replies short: one to three sentences of plain text, no markdown, no lists. They show up in a small comic speech bubble and may be read aloud.
             Always reply in the language the user speaks to you.

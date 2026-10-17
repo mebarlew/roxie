@@ -14,16 +14,22 @@ import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.systemBarsPadding
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
@@ -35,6 +41,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -42,6 +49,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.FilterQuality
@@ -51,11 +59,11 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import kotlinx.coroutines.delay
 
 private val Ink = Color(0xFF34285C)
-private val Blueberry = Color(0xFF6EA0F0)
 
-/** Setup: her name for you, the permissions she needs, and the switch that wakes her up. */
+/** Setup: pick a buddy and colour, your name, the permissions it needs, and the switch that wakes it up. */
 class MainActivity : ComponentActivity() {
     private var refresh by mutableIntStateOf(0)
     private val requestPermission =
@@ -104,9 +112,12 @@ private fun SetupScreen(
     val notifyOk = remember(refresh) {
         Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU || granted(context, Manifest.permission.POST_NOTIFICATIONS)
     }
-    val roxie = remember { Sprite.bitmap(Pose.HAPPY).asImageBitmap() }
+    var buddy by remember { mutableStateOf(prefs.buddy) }
+    var color by remember { mutableStateOf(prefs.color) }
+    val accent = Color(CANDY.getValue(color))
+    val title = buddy.title
 
-    MaterialTheme(colorScheme = lightColorScheme(primary = Blueberry, onPrimary = Color.White)) {
+    MaterialTheme(colorScheme = lightColorScheme(primary = accent, onPrimary = Color.White)) {
         Column(
             modifier = Modifier
                 .fillMaxSize()
@@ -117,7 +128,7 @@ private fun SetupScreen(
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.spacedBy(16.dp),
         ) {
-            Image(roxie, "Roxie", Modifier.size(200.dp), filterQuality = FilterQuality.None)
+            BuddyPreview(buddy, accent)
             Text("Rubber Duck Assistant", fontSize = 30.sp, fontWeight = FontWeight.Black, color = Ink)
             Text(
                 "Your tiny helper that floats over every app",
@@ -130,13 +141,21 @@ private fun SetupScreen(
                     name = it
                     prefs.name = it.trim()
                 },
-                label = { Text("What should she call you?") },
+                label = { Text("What should $title call you?") },
                 singleLine = true,
                 shape = RoundedCornerShape(16.dp),
                 modifier = Modifier.fillMaxWidth(),
             )
-            Step("Float over your apps", "So she can sit on top of anything", overlayOk, onOverlay)
-            Step("Hear you", "Tap her, talk, she listens", micOk) { onPermission(Manifest.permission.RECORD_AUDIO) }
+            BuddyPicker(buddy, accent) {
+                buddy = it
+                prefs.buddy = it
+            }
+            ColorPicker(color) {
+                color = it
+                prefs.color = it
+            }
+            Step("Float over your apps", "So $title can sit on top of anything", overlayOk, onOverlay)
+            Step("Hear you", "Tap, talk, $title listens", micOk) { onPermission(Manifest.permission.RECORD_AUDIO) }
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
                 Step("Stay awake", "Android needs a small notification for that", notifyOk) {
                     onPermission(Manifest.permission.POST_NOTIFICATIONS)
@@ -148,9 +167,83 @@ private fun SetupScreen(
                 shape = RoundedCornerShape(20.dp),
                 modifier = Modifier.fillMaxWidth().height(56.dp),
             ) {
-                Text("Wake Roxie up", fontSize = 18.sp, fontWeight = FontWeight.Bold)
+                Text("Wake $title up", fontSize = 18.sp, fontWeight = FontWeight.Bold)
             }
-            TextButton(onClick = onSleep) { Text("Put her to sleep", color = Ink.copy(alpha = 0.6f)) }
+            TextButton(onClick = onSleep) { Text("Put $title to sleep", color = Ink.copy(alpha = 0.6f)) }
+        }
+    }
+}
+
+/** The chosen buddy playing its idle animation in a disc with the colour ring, like the real bubble. */
+@Composable
+private fun BuddyPreview(buddy: Buddy, ring: Color) {
+    val context = LocalContext.current
+    val steps = remember { BuddyArt.anim(context, Anim.IDLE) }
+    var step by remember { mutableIntStateOf(0) }
+    LaunchedEffect(Unit) {
+        while (true) {
+            delay(STEP_MS)
+            step = (step + 1) % steps.size
+        }
+    }
+    val frame = remember(buddy, step) { BuddyArt.frame(context, buddy, steps[step].frame).asImageBitmap() }
+    Box(
+        Modifier.size(200.dp).clip(CircleShape).background(Color.White).border(8.dp, ring, CircleShape),
+        contentAlignment = Alignment.Center,
+    ) {
+        Image(
+            frame,
+            buddy.title,
+            Modifier.size(160.dp).offset(y = (steps[step].dy * 2.5f).dp),
+            filterQuality = FilterQuality.None,
+        )
+    }
+}
+
+@Composable
+private fun BuddyPicker(selected: Buddy, accent: Color, onPick: (Buddy) -> Unit) {
+    val context = LocalContext.current
+    Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Text("Pick your buddy", fontWeight = FontWeight.Bold, color = Ink)
+        Row(
+            Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
+            Buddy.entries.forEach { b ->
+                val icon = remember(b) { BuddyArt.frame(context, b, IDLE_FRAME).asImageBitmap() }
+                val shape = RoundedCornerShape(16.dp)
+                Column(
+                    Modifier
+                        .clip(shape)
+                        .background(Color.White)
+                        .border(3.dp, if (b == selected) accent else Color.White, shape)
+                        .clickable { onPick(b) }
+                        .padding(8.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                ) {
+                    Image(icon, b.title, Modifier.size(56.dp), filterQuality = FilterQuality.None)
+                    Text(b.title, fontSize = 12.sp, color = Ink)
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun ColorPicker(selected: String, onPick: (String) -> Unit) {
+    Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Text("Bubble colour", fontWeight = FontWeight.Bold, color = Ink)
+        Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            CANDY.forEach { (name, argb) ->
+                Box(
+                    Modifier
+                        .size(40.dp)
+                        .clip(CircleShape)
+                        .background(Color(argb))
+                        .border(3.dp, if (name == selected) Ink else Color.White, CircleShape)
+                        .clickable { onPick(name) },
+                )
+            }
         }
     }
 }

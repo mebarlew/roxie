@@ -1,6 +1,7 @@
 """Roxie sprite: one 40x40 indexed grid, poses as overrides, colour variants as palette swaps.
 
-The app's Sprite.kt is a port of this file; keep the grids and palettes in sync.
+Retired Roxie v1 art. The drawing helpers (gradient, card, glyph, fonts) and the candy VARIANTS are
+still shared by the other art scripts.
 """
 
 from PIL import Image, ImageDraw, ImageFilter, ImageFont

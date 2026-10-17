@@ -17,7 +17,7 @@ import java.util.concurrent.Executors
 import kotlin.math.sqrt
 
 /**
- * Roxie's voice: Gemini TTS through the gateway, cached on disk, with the phone's own TTS as the
+ * The buddy's voice: Gemini TTS through the gateway, cached on disk, with the phone's own TTS as the
  * fallback (Google's free tier allows only a few TTS requests a minute). [onMouth] drives lip-sync.
  */
 class Voice(private val context: Context, private val onMouth: (Boolean) -> Unit) {
@@ -28,7 +28,7 @@ class Voice(private val context: Context, private val onMouth: (Boolean) -> Unit
     private var mouthTicker: Runnable? = null
     private var generation = 0
 
-    /** Silent, vibrate or Do Not Disturb means Roxie makes no sound at all. */
+    /** Silent, vibrate or Do Not Disturb means the buddy makes no sound at all. */
     fun soundAllowed(): Boolean {
         val ringer = (context.getSystemService(Context.AUDIO_SERVICE) as AudioManager).ringerMode
         val filter = (context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager).currentInterruptionFilter
@@ -165,7 +165,7 @@ class Voice(private val context: Context, private val onMouth: (Boolean) -> Unit
         onMouth(false)
     }
 
-    /** One flag per [WINDOW_MS] of audio: is she loud enough to have her mouth open? */
+    /** One flag per [WINDOW_MS] of audio: is the voice loud enough for an open mouth? */
     private fun mouthEnvelope(wav: ByteArray): BooleanArray {
         val buf = ByteBuffer.wrap(wav).order(ByteOrder.LITTLE_ENDIAN)
         var dataStart = 44
