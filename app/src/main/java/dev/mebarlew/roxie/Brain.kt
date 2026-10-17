@@ -31,7 +31,8 @@ class Brain(private val prefs: Prefs) {
         return JSONObject().put("role", "user").put("content", content)
     }
 
-    private fun systemPrompt(): String {
+    /** Also the system instruction of a Live voice session. */
+    fun systemPrompt(): String {
         val name = prefs.name.ifBlank { "your human" }
         val buddy = prefs.buddy
         val now = DateFormat.getDateTimeInstance(DateFormat.FULL, DateFormat.SHORT).format(Date())

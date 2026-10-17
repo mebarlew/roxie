@@ -32,9 +32,9 @@ import java.util.Calendar
 import java.util.Date
 import java.util.concurrent.Executors
 
-/** Keeps the buddy floating over other apps and runs the tap → listen → answer loop. */
+/** Keeps the buddy floating over other apps and runs the tap → listen → answer loop, live over Gemini Live. */
 class BubbleService : Service() {
-    private enum class Mode { IDLE, GREETING, LISTENING, THINKING, ANSWERING }
+    private enum class Mode { IDLE, LISTENING, THINKING, ANSWERING }
 
     private val main = Handler(Looper.getMainLooper())
     private val io = Executors.newSingleThreadExecutor()
@@ -55,7 +55,6 @@ class BubbleService : Service() {
     private var lastMouthAt = 0L
     private var typing = false
     private var dragging = false
-    private var waking = false
     private var canRetryListening = false
     private var happyUntil = 0L
 
@@ -63,6 +62,28 @@ class BubbleService : Service() {
     @Volatile private var tiredUntil = 0L
     private var lastAnswer = ""
     private var screen: ByteArray? = null
+
+    // The Live voice session, while one is open. OkHttp's and the mic's threads read these.
+    @Volatile private var live: LiveSession? = null
+    @Volatile private var liveAudio: LiveAudio? = null
+    /** Bumped per session, so late events from a closed one are dropped. */
+    @Volatile private var liveGen = 0
+    @Volatile private var soundOn = true
+    @Volatile private var lastLiveActivity = 0L
+
+    /** Set on OkHttp's thread from the first audio chunk of a turn until its turnComplete or interrupted. */
+    @Volatile private var turnStreaming = false
+
+    /** After a tap shushed the buddy mid-answer: the server keeps streaming that turn, so drop it until it ends. */
+    @Volatile private var shushed = false
+    private var turnDone = false
+    private var heardText = ""
+    private var saidText = ""
+
+    // Mic chunks recorded before setupComplete, so words said right after the tap aren't lost.
+    private val earlyLock = Any()
+    private val earlyMic = ArrayDeque<ByteArray>()
+    private var liveReady = false
 
     override fun onBind(intent: Intent?): IBinder? = null
 
@@ -92,6 +113,7 @@ class BubbleService : Service() {
 
     override fun onDestroy() {
         awake = false
+        endLive(null)
         main.removeCallbacksAndMessages(null)
         bubble.stopTyping()
         recognizer?.destroy()
@@ -170,6 +192,11 @@ class BubbleService : Service() {
     }
 
     private fun onBuddyTap() {
+        if (live != null) {
+            // While it talks a tap shushes it and it keeps listening; while it listens a tap ends the session.
+            if (mode == Mode.ANSWERING) shush() else endLive("Okay, I'll be right here!")
+            return
+        }
         if (mode == Mode.LISTENING) {
             recognizer?.cancel()
             mode = Mode.IDLE
@@ -187,13 +214,11 @@ class BubbleService : Service() {
             showTired()
             return
         }
-        // Mid-greeting or mid-thinking, a tap cuts it off and listens right away.
-        val fresh = mode == Mode.IDLE
         Latency.tap()
         voice.stop()
         bubble.stopTyping()
         typing = false
-        lookAtScreen { if (fresh) greet() else startListening() }
+        startLive()
     }
 
     /** "Hey ducky": like a tap, but straight to listening so the rest of your sentence isn't talked over. */
@@ -202,12 +227,11 @@ class BubbleService : Service() {
             showTired()
             return
         }
-        waking = true
         Latency.tap()
         voice.stop()
         bubble.stopTyping()
         typing = false
-        lookAtScreen { startListening() }
+        startLive()
     }
 
     /** Grabs the screen without the speech bubble in the way, when screen reading is switched on. */
@@ -229,16 +253,7 @@ class BubbleService : Service() {
         }, BUBBLE_HIDE_MS)
     }
 
-    private fun greet() {
-        voice.stop()
-        mode = Mode.GREETING
-        val line = "Hey ${prefs.name.ifBlank { "there" }}, what's up?"
-        showBubble(line)
-        voice.speak(line) { if (mode == Mode.GREETING) startListening() }
-    }
-
     private fun startListening(retry: Boolean = true) {
-        waking = false
         // Only one recognizer can have the mic.
         wake.listening = false
         if (!SpeechRecognizer.isRecognitionAvailable(this)) {
@@ -345,6 +360,189 @@ class BubbleService : Service() {
         }
     }
 
+    /**
+     * Opens a Live session and starts the mic at once, while it connects and the screen is captured. No spoken
+     * greeting: listening right away is what makes it feel quick.
+     */
+    private fun startLive() {
+        // Only one recorder can have the mic.
+        wake.listening = false
+        val gen = ++liveGen
+        val audioOut = LiveAudio(this, ::onLiveMic) { if (gen == liveGen) endLive("My ears glitched. Tap me to try again!") }
+        if (!audioOut.startMic()) {
+            audioOut.release()
+            mode = Mode.IDLE
+            showBubble("I need the microphone permission. Open Rubber Duck Assistant to fix it.")
+            return
+        }
+        liveAudio = audioOut
+        soundOn = voice.soundAllowed()
+        heardText = ""
+        saidText = ""
+        turnDone = false
+        turnStreaming = false
+        shushed = false
+        lastLiveActivity = SystemClock.uptimeMillis()
+        mode = Mode.LISTENING
+        live = LiveSession(brain.systemPrompt(), prefs.voice, LiveEvents(gen)).also { it.start() }
+        lookAtScreen {
+            if (gen != liveGen) return@lookAtScreen
+            if (mode == Mode.LISTENING && heardText.isEmpty()) showBubble("🎤 I'm listening…", animate = false)
+            sendScreen()
+        }
+    }
+
+    private fun onLiveMic(pcm: ByteArray) {
+        synchronized(earlyLock) {
+            if (!liveReady) {
+                earlyMic.addLast(pcm)
+                while (earlyMic.size > EARLY_MIC_CHUNKS) earlyMic.removeFirst()
+                return
+            }
+        }
+        live?.sendAudio(pcm)
+    }
+
+    /** The screenshot goes up as the session's first frame, once both it and the session are ready. */
+    private fun sendScreen() {
+        val shot = screen ?: return
+        if (!liveReady) return
+        screen = null
+        live?.sendFrame(shot)
+    }
+
+    private fun onLiveReady() {
+        sendScreen()
+        synchronized(earlyLock) {
+            earlyMic.forEach { live?.sendAudio(it) }
+            earlyMic.clear()
+            liveReady = true
+        }
+        Latency.micReady()
+    }
+
+    /** The answer has begun, by its first audio or (in silent mode) its first words. */
+    private fun startAnswer() {
+        if (mode == Mode.ANSWERING) return
+        mode = Mode.ANSWERING
+        Latency.replyStarted()
+    }
+
+    /** Ends the turn once its audio has played out, and goes back to listening with the session open. */
+    private fun finishLiveTurn() {
+        turnDone = false
+        if (mode == Mode.ANSWERING) Latency.replyDone()
+        voice.stop()
+        lastAnswer = saidText
+        heardText = ""
+        saidText = ""
+        mode = Mode.LISTENING
+    }
+
+    private fun shush() {
+        liveAudio?.flush()
+        voice.stop()
+        if (turnStreaming) shushed = true
+        mode = Mode.LISTENING
+    }
+
+    private fun endLive(message: String?) {
+        liveGen++
+        live?.close()
+        live = null
+        // After the socket, so a chunk still in flight can't start the speaker again.
+        liveAudio?.release()
+        liveAudio = null
+        synchronized(earlyLock) {
+            earlyMic.clear()
+            liveReady = false
+        }
+        voice.stop()
+        turnDone = false
+        mode = Mode.IDLE
+        if (message != null) showBubble(message)
+    }
+
+    private fun liveErrorLine(error: LiveError): String = when (error) {
+        is LiveError.Refused -> when (error.code) {
+            429 -> {
+                tiredUntil = System.currentTimeMillis() + untilUtcMidnight()
+                tiredLine()
+            }
+            401, 403 -> "My key to the brain isn't working. The app needs a new gateway key."
+            else -> "My brain hiccuped (error ${error.code}). Try again?"
+        }
+        is LiveError.Quota -> {
+            tiredUntil = System.currentTimeMillis() + LIVE_QUOTA_REST_MS
+            tiredLine()
+        }
+        is LiveError.Server, is LiveError.Network -> "I can't reach my brain right now. Is the internet on?"
+    }
+
+    /** One per session. Audio goes straight to the speaker; everything else is handled on the main thread. */
+    private inner class LiveEvents(private val gen: Int) : LiveSession.Listener {
+        private fun ui(block: () -> Unit) {
+            main.post { if (gen == liveGen) block() }
+        }
+
+        override fun onReady() = ui(::onLiveReady)
+
+        override fun onAudio(pcm: ByteArray) {
+            if (gen != liveGen || shushed) return
+            lastLiveActivity = SystemClock.uptimeMillis()
+            if (soundOn) liveAudio?.play(pcm)
+            if (!turnStreaming) {
+                turnStreaming = true
+                ui {
+                    startAnswer()
+                    if (soundOn) voice.mouthFollows { liveAudio?.mouthOpen() == true }
+                }
+            }
+        }
+
+        override fun onHeard(text: String) = ui {
+            lastLiveActivity = SystemClock.uptimeMillis()
+            heardText += text
+            if (mode == Mode.LISTENING || mode == Mode.THINKING) showBubble("🎤 ${heardText.trim()}", animate = false)
+        }
+
+        override fun onSaid(text: String) = ui {
+            if (shushed) return@ui
+            saidText += text
+            startAnswer()
+            showBubble(saidText.trim(), animate = false)
+        }
+
+        override fun onUserDone() = ui {
+            lastLiveActivity = SystemClock.uptimeMillis()
+            if (mode == Mode.LISTENING) {
+                mode = Mode.THINKING
+                Latency.speechEnded()
+            }
+        }
+
+        override fun onInterrupted() {
+            turnStreaming = false
+            shushed = false
+            ui {
+                // The user talked over it: what's queued is stale, and the new question is already coming in.
+                liveAudio?.flush()
+                voice.stop()
+                heardText = ""
+                saidText = ""
+                mode = Mode.LISTENING
+            }
+        }
+
+        override fun onTurnComplete() {
+            turnStreaming = false
+            shushed = false
+            ui { turnDone = true }
+        }
+
+        override fun onClosed(error: LiveError) = ui { endLive(liveErrorLine(error)) }
+    }
+
     private fun tired() = System.currentTimeMillis() < tiredUntil
 
     private fun tiredLine() =
@@ -376,6 +574,7 @@ class BubbleService : Service() {
     }
 
     private fun closeBubble() {
+        if (live != null) endLive(null)
         if (mode == Mode.LISTENING) recognizer?.cancel()
         voice.stop()
         bubble.stopTyping()
@@ -429,8 +628,12 @@ class BubbleService : Service() {
             buddyView.ringColor = CANDY.getValue(prefs.color)
             buddyView.lipSync = if (speaking()) mouthOpen else null
             buddyView.anim = currentAnim()
+            if (live != null) {
+                if (turnDone && liveAudio?.playing != true) finishLiveTurn()
+                if (mode == Mode.LISTENING && SystemClock.uptimeMillis() - lastLiveActivity > LIVE_IDLE_MS) endLive(null)
+            }
             // Paused while anything plays media: speech in a video was enough to wake it.
-            wake.listening = prefs.wakeWord && !waking && !dragging && !typing && !voice.busy &&
+            wake.listening = prefs.wakeWord && live == null && !dragging && !typing && !voice.busy &&
                 !audio.isMusicActive && (mode == Mode.IDLE || mode == Mode.ANSWERING)
             main.postDelayed(this, 50L)
         }
@@ -470,5 +673,14 @@ class BubbleService : Service() {
         private const val RETRY_LISTEN_MS = 400L
         private const val TIRED_DEFAULT_MS = 5 * 60_000L
         private const val DAY_MS = 86_400_000L
+
+        /** A quiet Live session closes after this, and the wake word takes over again. */
+        private const val LIVE_IDLE_MS = 30_000L
+
+        /** 4 s of 40 ms mic chunks: enough to cover the connect, small enough to stay fresh. */
+        private const val EARLY_MIC_CHUNKS = 100
+
+        /** Community reports put a Live quota hit as a 1011 close; resting a while beats hammering it. */
+        private const val LIVE_QUOTA_REST_MS = 10 * 60_000L
     }
 }
