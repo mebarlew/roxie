@@ -54,4 +54,6 @@ dependencies {
     // On-device wake word. @aar takes the Android JNA build instead of the desktop jar Vosk's POM pulls in.
     implementation("net.java.dev.jna:jna:5.18.1@aar")
     implementation("com.alphacephei:vosk-android:0.3.75@aar")
+    // The WebSocket for Gemini Live voice (Bart OK'd it on 2026-10-17).
+    implementation("com.squareup.okhttp3:okhttp:5.5.0")
 }
