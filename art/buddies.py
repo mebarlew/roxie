@@ -2,7 +2,7 @@
 
 A frame is a set of part states (eyes, mouth, ears) plus whole-body motion (bob, squash) and an
 effect (Zzz, sparkles, thought dots, sound waves, sweat). Animations are lists of 100 ms frames.
-Every buddy wears a bow in the user's candy colour, so the colour picker works for all of them.
+The user's candy colour goes on the ring around the floating bubble, not on the buddies.
 """
 
 from dataclasses import dataclass
@@ -85,14 +85,6 @@ def blush(d, y, left, right):
         d.ellipse((x, y, x + 6, y + 3), fill=BLUSH)
 
 
-def bow(d, cx, cy, v):
-    d.polygon([(cx, cy), (cx - 7, cy - 5), (cx - 7, cy + 5)], fill=v["hat"], outline=INK)
-    d.polygon([(cx, cy), (cx + 7, cy - 5), (cx + 7, cy + 5)], fill=v["hat"], outline=INK)
-    d.line([(cx - 5, cy - 2), (cx - 5, cy + 2)], fill=v["hat_light"])
-    d.line([(cx + 5, cy - 2), (cx + 5, cy + 2)], fill=v["hat_shade"])
-    d.rectangle((cx - 1, cy - 2, cx + 1, cy + 2), fill=v["hat_shade"], outline=INK)
-
-
 def eyes(d, left, right, y, state, lid, sclera=False):
     eye(d, left, y, state, -1, lid, sclera)
     eye(d, right, y, state, 1, lid, sclera)
@@ -103,13 +95,12 @@ TUFT = {"rest": [(24, 5), (33, 2), (42, 6)], "perk": [(24, 3), (33, 0), (42, 4)]
         "droop": [(19, 11), (33, 7), (47, 11)]}
 
 
-def duck(d, f, v):
+def duck(d, f):
     p = PAL["duck"]
     bases = [((29, 16), (33, 13)), ((31, 15), (36, 15)), ((35, 16), (38, 16))]
     for (a, b), tip in zip(bases, TUFT[f.ears]):
         d.polygon([a, tip, b], fill=p["body"])
     head(d, (9, 13, 55, 58), p)
-    bow(d, 46, 19, v)
     eyes(d, 23, 41, 33, f.eyes, p["body"])
     blush(d, 40, 11, 46)
     open_by = {"talk2": 0, "open_smile": 0, "talk1": 1, "o": 2}
@@ -131,7 +122,7 @@ CAT_TIP = {"rest": ((12, 5), (12, 5)), "perk": ((12, 2), (12, 2)), "wiggleL": ((
            "wiggleR": ((12, 5), (8, 8)), "droop": ((6, 14), (6, 14))}
 
 
-def cat(d, f, v):
+def cat(d, f):
     p = PAL["cat"]
     for tip, flip in zip(CAT_TIP[f.ears], (False, True)):
         ear = [(10, 28), tip, (29, 17)]
@@ -141,7 +132,6 @@ def cat(d, f, v):
     head(d, (7, 14, 57, 56), p)
     for x0, x1 in ((27, 28), (32, 32), (37, 36)):
         d.line([(x0, 15), (x1, 20)], fill=p["shade"], width=2)
-    bow(d, 47, 16, v)
     eyes(d, 22, 42, 34, f.eyes, p["body"])
     blush(d, 40, 11, 47)
     d.polygon([(30, 39), (34, 39), (32, 41)], fill=p["nose"])
@@ -169,7 +159,7 @@ def cat_whiskers(d):
 FROG_LIFT = {"rest": (0, 0), "perk": (-2, -2), "wiggleL": (-2, 0), "wiggleR": (0, -2), "droop": (2, 2)}
 
 
-def frog(d, f, v):
+def frog(d, f):
     p = PAL["frog"]
     sclera = f.eyes in ("open", "up", "left", "right", "half")
     bumps = [(8, 7 + dy, 30, 29 + dy) if i == 0 else (33, 7 + dy, 55, 29 + dy)
@@ -179,7 +169,6 @@ def frog(d, f, v):
     head(d, (5, 17, 58, 57), p)
     for box in bumps:
         d.chord(box, 180, 360, fill=p["body"])
-    bow(d, 31, 13, v)
     (l, r) = FROG_LIFT[f.ears]
     eye(d, 19, 19 + l, f.eyes, -1, p["body"], sclera)
     eye(d, 44, 19 + r, f.eyes, 1, p["body"], sclera)
@@ -213,7 +202,7 @@ def bunny_ear(d, box, p, flop):
         d.ellipse((fx0 + 3, 12, fx0 + 13, 16), fill=p["inner"])
 
 
-def bunny(d, f, v):
+def bunny(d, f):
     p = PAL["bunny"]
     top = 0 if f.ears == "perk" else 3
     flop_l = f.ears in ("wiggleL", "droop")
@@ -221,7 +210,6 @@ def bunny(d, f, v):
     bunny_ear(d, (14, top, 27, 34), p, -1 if flop_l else 0)
     bunny_ear(d, (36, top, 49, 34), p, 1 if flop_r else 0)
     head(d, (10, 21, 54, 61), p)
-    bow(d, 22, 25, v)
     eyes(d, 23, 41, 40, f.eyes, p["body"])
     blush(d, 46, 12, 45)
     d.ellipse((30, 45, 34, 48), fill=p["nose"])
@@ -246,7 +234,7 @@ RUBBER_TAIL = {"rest": (6, 29), "perk": (5, 25), "wiggleL": (4, 23), "wiggleR": 
 RUBBER_WING = {"rest": 0, "perk": -2, "wiggleL": 0, "wiggleR": -5, "droop": 3}
 
 
-def rubber(d, f, v):
+def rubber(d, f):
     """Classic side-view rubber duck facing right."""
     p = PAL["duck"]
     d.polygon([(9, 42), RUBBER_TAIL[f.ears], (20, 35)], fill=p["body"])
@@ -258,7 +246,6 @@ def rubber(d, f, v):
     d.line([(20, 40 + w), (30, 39 + w)], fill=p["light"])
     d.ellipse((28, 6, 56, 35), fill=p["body"])
     d.ellipse((33, 9, 41, 15), fill=p["light"])
-    bow(d, 40, 7, v)
     eye(d, 45, 18, f.eyes, 1, p["body"])
     d.ellipse((37, 24, 43, 27), fill=BLUSH)
     open_by = {"talk2": 0, "open_smile": 0, "talk1": 2, "o": 3}
@@ -280,18 +267,18 @@ NAMES = {"rubber": "Sudo", "duck": "Duckling", "cat": "Cat", "frog": "Frog", "bu
 
 
 @lru_cache(maxsize=None)
-def parts(name, eyes_state, mouth, ears, variant):
+def parts(name, eyes_state, mouth, ears):
     img = Image.new("RGBA", (SIZE, SIZE), (0, 0, 0, 0))
     d = ImageDraw.Draw(img)
-    DRAW[name](d, Frame(eyes_state, mouth, ears), base.VARIANTS[variant])
+    DRAW[name](d, Frame(eyes_state, mouth, ears))
     img = roxie_hd.outline(img)
     if name == "cat":
         cat_whiskers(ImageDraw.Draw(img))
     return img
 
 
-def buddy(name, frame=Frame(), variant="Blueberry"):
-    return parts(name, frame.eyes, frame.mouth, frame.ears, variant)
+def buddy(name, frame=Frame()):
+    return parts(name, frame.eyes, frame.mouth, frame.ears)
 
 
 POSES = {
@@ -300,7 +287,7 @@ POSES = {
     "talking": Frame(mouth="talk2"),
     "listening": Frame(mouth="o", ears="perk"),
     "thinking": Frame(eyes="up", mouth="flat"),
-    "sleepy": Frame(eyes="half", mouth="flat", ears="droop"),
+    "sleepy": Frame(eyes="sleepy", mouth="flat", ears="droop"),
     "happy": Frame(eyes="happy", mouth="open_smile"),
 }
 
@@ -337,10 +324,10 @@ ANIMS = {
         (F(dy=-5, fx="sparkle1", ears="perk", **HAPPY), 2), (F(dy=-3, fx="sparkle0", **HAPPY), 1),
         (F(squash=0.12, fx="sparkle1", **HAPPY), 1), (F(fx="sparkle0", **HAPPY), 2))]),
     "sleepy": run(
-        (F(eyes="half", fx="zzz0", **SLEEP), 3), (F(eyes="half", dy=1, fx="zzz1", **SLEEP), 3),
-        (F(eyes="sleepy", dy=2, fx="zzz2", **SLEEP), 3), (F(eyes="sleepy", dy=2, fx="zzz3", **SLEEP), 3),
-        (F(eyes="sleepy", dy=1, fx="zzz4", **SLEEP), 3), (F(eyes="sleepy", fx="zzz5", **SLEEP), 3),
-        (F(eyes="half", fx="zzz0", **SLEEP), 3), (F(eyes="half", dy=1, fx="zzz1", **SLEEP), 3)),
+        (F(eyes="sleepy", fx="zzz0", **SLEEP), 3), (F(eyes="sleepy", dy=1, fx="zzz1", **SLEEP), 3),
+        (F(eyes="closed", dy=2, fx="zzz2", **SLEEP), 3), (F(eyes="closed", dy=2, fx="zzz3", **SLEEP), 3),
+        (F(eyes="closed", dy=1, fx="zzz4", **SLEEP), 3), (F(eyes="sleepy", fx="zzz5", **SLEEP), 3),
+        (F(eyes="sleepy", fx="zzz0", **SLEEP), 3), (F(eyes="sleepy", dy=1, fx="zzz1", **SLEEP), 3)),
     "dragged": run(*[(F(eyes="squint", mouth="o", ears="droop" if i % 2 else "perk",
                         squash=(0.14 if i % 2 else -0.12), fx="sweat"), 2) for i in range(6)]),
 }
@@ -432,7 +419,7 @@ def sheet(path):
     label = base.ImageFont.truetype(base.FONT_DIR + "LiberationSans-Bold.ttf", 26)
     small = base.ImageFont.truetype(base.FONT_DIR + "LiberationSans-Regular.ttf", 22)
     base.centered_text(d, width / 2, 24, "Pick your buddy", title)
-    base.centered_text(d, width / 2, 98, "Sudo the rubber duck (default) · duckling · cat · frog · bunny · the bow takes your colour",
+    base.centered_text(d, width / 2, 98, "Sudo the rubber duck (default) · duckling · cat · frog · bunny · your colour goes on the bubble ring",
                        small, (120, 100, 160))
 
     def col_x(i):
@@ -456,8 +443,12 @@ def sheet(path):
     for i, variant in enumerate(base.VARIANTS):
         x = col_x(i)
         base.card(img, (x, y, x + cw, y + 260))
-        spr = buddy("rubber", POSES["happy"], variant).resize((192, 192), Image.NEAREST)
-        img.alpha_composite(spr, (x + (cw - spr.width) // 2, y + 8))
+        ring = 180
+        rx, ry = x + (cw - ring) // 2, y + 16
+        ImageDraw.Draw(img).ellipse((rx, ry, rx + ring, ry + ring), fill=WHITE,
+                                    outline=base.VARIANTS[variant]["hat"], width=10)
+        spr = buddy("rubber", POSES["happy"]).resize((128, 128), Image.NEAREST)
+        img.alpha_composite(spr, (rx + (ring - 128) // 2, ry + (ring - 128) // 2))
         base.centered_text(ImageDraw.Draw(img), x + cw / 2, y + 214, variant, label)
 
     x0, x1 = col_x(5), col_x(6) + cw
