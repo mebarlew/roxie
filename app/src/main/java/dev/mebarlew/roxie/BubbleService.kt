@@ -189,6 +189,7 @@ class BubbleService : Service() {
         }
         // Mid-greeting or mid-thinking, a tap cuts it off and listens right away.
         val fresh = mode == Mode.IDLE
+        Latency.tap()
         voice.stop()
         bubble.stopTyping()
         typing = false
@@ -202,6 +203,7 @@ class BubbleService : Service() {
             return
         }
         waking = true
+        Latency.tap()
         voice.stop()
         bubble.stopTyping()
         typing = false
@@ -261,12 +263,14 @@ class BubbleService : Service() {
 
     private val listener = object : RecognitionListener {
         override fun onReadyForSpeech(params: Bundle?) {
-            if (mode == Mode.LISTENING) showBubble("🎤 I'm listening…", animate = false)
+            if (mode != Mode.LISTENING) return
+            Latency.micReady()
+            showBubble("🎤 I'm listening…", animate = false)
         }
         override fun onBeginningOfSpeech() = Unit
         override fun onRmsChanged(rmsdB: Float) = Unit
         override fun onBufferReceived(buffer: ByteArray?) = Unit
-        override fun onEndOfSpeech() = Unit
+        override fun onEndOfSpeech() = Latency.speechEnded()
         override fun onEvent(eventType: Int, params: Bundle?) = Unit
 
         override fun onPartialResults(partialResults: Bundle?) {
@@ -363,6 +367,7 @@ class BubbleService : Service() {
     private fun showAnswer(answer: String) {
         mode = Mode.ANSWERING
         lastAnswer = answer
+        Latency.replyStarted()
         showBubble(answer, speaker = if (voice.soundAllowed()) Speaker.ON else Speaker.MUTED)
     }
 
@@ -384,6 +389,7 @@ class BubbleService : Service() {
         bubble.show(message, animate, speaker) { isTyping ->
             typing = isTyping
             if (!isTyping && animate) happyUntil = SystemClock.uptimeMillis() + 1500
+            if (!isTyping && mode == Mode.ANSWERING) Latency.replyDone()
         }
         bubble.visibility = View.VISIBLE
         bubbleShown = true
