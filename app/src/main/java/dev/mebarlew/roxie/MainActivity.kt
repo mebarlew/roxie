@@ -23,6 +23,7 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -236,10 +237,11 @@ private fun SetupScreen(
                 color = Ink,
                 modifier = Modifier.fillMaxWidth(),
             )
-            Step("Float over your apps", "So $title can sit on top of anything", overlayOk, onOverlay)
-            Step("Hear you", "Tap, talk, $title listens", micOk) { onPermission(Manifest.permission.RECORD_AUDIO) }
+            Step("📱", "Float over your apps", "So $title can sit on top of anything", overlayOk, onOverlay)
+            Step("🎤", "Hear you", "Tap, talk, $title listens", micOk) { onPermission(Manifest.permission.RECORD_AUDIO) }
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
                 Step(
+                    "👀",
                     "See your screen",
                     "Only when you tap $title and ask. If Android says \"Restricted setting\": App info → ⋮ → Allow restricted settings, then try again.",
                     screenOk,
@@ -247,7 +249,7 @@ private fun SetupScreen(
                 )
             }
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                Step("Stay awake", "Android needs a small notification for that", notifyOk) {
+                Step("🔔", "Stay awake", "Android needs a small notification for that", notifyOk) {
                     onPermission(Manifest.permission.POST_NOTIFICATIONS)
                 }
             }
@@ -364,22 +366,16 @@ private fun VoicePicker(selected: String, accent: Color, status: String, onPick:
 
 @Composable
 private fun WakeWordCard(on: Boolean, status: String, onToggle: (Boolean) -> Unit) {
-    Card(
-        shape = RoundedCornerShape(20.dp),
-        colors = CardDefaults.cardColors(containerColor = Color.White),
-        modifier = Modifier.fillMaxWidth(),
-    ) {
-        Row(Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
-            Column(Modifier.weight(1f)) {
-                Text("Wake on \"${WakeWord.PHRASE}\"", fontWeight = FontWeight.Bold, color = Ink)
-                Text(
-                    status.ifEmpty { "Listens on the phone only. Android's green mic dot stays on while it waits." },
-                    fontSize = 13.sp,
-                    color = Ink.copy(alpha = 0.6f),
-                )
-            }
-            Switch(checked = on, onCheckedChange = onToggle)
+    SetupCard("👂") {
+        Column(Modifier.weight(1f)) {
+            Text("Wake on \"${WakeWord.PHRASE}\"", fontWeight = FontWeight.Bold, color = Ink)
+            Text(
+                status.ifEmpty { "Listens on the phone only. Android's green mic dot stays on while it waits." },
+                fontSize = 13.sp,
+                color = Ink.copy(alpha = 0.6f),
+            )
         }
+        Switch(checked = on, onCheckedChange = onToggle)
     }
 }
 
@@ -403,22 +399,44 @@ private fun ColorPicker(selected: String, onPick: (String) -> Unit) {
 }
 
 @Composable
-private fun Step(title: String, subtitle: String, done: Boolean, onClick: () -> Unit) {
+private fun Step(icon: String, title: String, subtitle: String, done: Boolean, onClick: () -> Unit) {
+    SetupCard(icon) {
+        Column(Modifier.weight(1f)) {
+            Text(title, fontWeight = FontWeight.Bold, color = Ink)
+            Text(subtitle, fontSize = 13.sp, color = Ink.copy(alpha = 0.6f))
+        }
+        if (done) {
+            Text("✓", fontSize = 22.sp, color = Color(0xFF3CB371), fontWeight = FontWeight.Bold)
+        } else {
+            Button(onClick = onClick, shape = RoundedCornerShape(14.dp)) { Text("Allow") }
+        }
+    }
+}
+
+/** A white card that floats on the gradient with an icon tile in the buddy's colour, like an iPhone settings row. */
+@Composable
+private fun SetupCard(icon: String, content: @Composable RowScope.() -> Unit) {
     Card(
         shape = RoundedCornerShape(20.dp),
         colors = CardDefaults.cardColors(containerColor = Color.White),
+        elevation = CardDefaults.cardElevation(defaultElevation = 3.dp),
         modifier = Modifier.fillMaxWidth(),
     ) {
-        Row(Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
-            Column(Modifier.weight(1f)) {
-                Text(title, fontWeight = FontWeight.Bold, color = Ink)
-                Text(subtitle, fontSize = 13.sp, color = Ink.copy(alpha = 0.6f))
+        Row(
+            Modifier.padding(16.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            Box(
+                Modifier
+                    .size(40.dp)
+                    .clip(RoundedCornerShape(12.dp))
+                    .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.15f)),
+                contentAlignment = Alignment.Center,
+            ) {
+                Text(icon, fontSize = 20.sp)
             }
-            if (done) {
-                Text("✓", fontSize = 22.sp, color = Color(0xFF3CB371), fontWeight = FontWeight.Bold)
-            } else {
-                Button(onClick = onClick, shape = RoundedCornerShape(14.dp)) { Text("Allow") }
-            }
+            content()
         }
     }
 }
