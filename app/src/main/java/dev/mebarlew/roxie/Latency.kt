@@ -7,8 +7,9 @@ import androidx.compose.runtime.setValue
 
 /**
  * How fast the buddy answers, per turn: tap → mic ready, end of speech → first reply (the first audio on Live,
- * the answer text on the old chain), and reply → done. Main thread only. [last] is Compose state, so the setup
- * screen shows the newest turn as soon as it's recorded.
+ * the answer text on the old chain), and reply → done. Later turns of an open Live session start at the end of
+ * speech and have no tap time. Main thread only. [last] is Compose state, so the setup screen shows the newest
+ * turn as soon as it's recorded.
  */
 object Latency {
     class Turn(val tapToMic: Long?, val speechToReply: Long?, val replyToDone: Long?) {
@@ -41,11 +42,13 @@ object Latency {
     }
 
     fun speechEnded() {
-        if (tapAt > 0) speechEndAt = now()
+        // Talking over a reply starts the next turn, so the one it cut off is recorded first.
+        if (replyAt > 0) record(null)
+        speechEndAt = now()
     }
 
     fun replyStarted() {
-        if (tapAt > 0 && replyAt == 0L) replyAt = now()
+        if ((tapAt > 0 || speechEndAt > 0) && replyAt == 0L) replyAt = now()
     }
 
     fun replyDone() {
@@ -62,6 +65,8 @@ object Latency {
         while (turns.size > KEPT) turns.removeFirst()
         last = turn
         tapAt = 0
+        micAt = 0
+        speechEndAt = 0
         replyAt = 0
     }
 
