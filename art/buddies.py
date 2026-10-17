@@ -184,62 +184,13 @@ def bunny(d, pose, v):
         d.arc((32, 47, 36, 52), 20, 160, fill=INK)
 
 
-def girl_eye(d, cx, cy, state, v):
-    if state not in ("open", "up"):
-        eye(d, cx, cy, state)
-        return
-    dx, dy = (1, -2) if state == "up" else (0, 0)
-    x, y = cx + dx, cy + dy
-    d.ellipse((x - 3, y - 4, x + 3, y + 4), fill=INK)
-    d.ellipse((x - 2, y, x + 2, y + 3), fill=v["iris"])
-    d.rectangle((x - 2, y - 3, x - 1, y - 2), fill=WHITE)
-    d.point((x + 1, y + 1), fill=v["iris_light"])
-
-
-def roxie(d, pose, v):
-    """Roxie in the same chibi style as the animals: brown bob, blue eyes, cat-ear beanie."""
-    p = {k: roxie_hd.PAL[k] for k in ("hair", "hair_light", "hair_shade", "skin", "skin_shade")}
-    ear = [(12, 20), (12, 2), (26, 11)]
-    inner = [(15, 16), (15, 7), (22, 12)]
-    for pts in (ear, mirror(ear)):
-        d.polygon(pts, fill=v["hat"], outline=INK)
-    for pts in (inner, mirror(inner)):
-        d.polygon(pts, fill=v["ear_inner"])
-    d.ellipse((8, 10, 56, 61), fill=p["hair_shade"])
-    d.ellipse((8, 10, 54, 59), fill=p["hair"])
-    d.ellipse((14, 21, 50, 59), fill=p["skin_shade"])
-    d.ellipse((14, 21, 48, 57), fill=p["skin"])
-    d.chord((12, 12, 52, 46), 180, 360, fill=p["hair"])
-    for box in ((14, 22, 25, 34), (22, 23, 33, 35), (31, 23, 42, 35), (39, 22, 50, 34)):
-        d.chord(box, 0, 180, fill=p["hair"])
-    d.line([(18, 27), (22, 25)], fill=p["hair_light"], width=2)
-    d.chord((10, 3, 54, 38), 180, 360, fill=v["hat"], outline=INK)
-    d.arc((16, 7, 48, 30), 205, 335, fill=v["hat_light"], width=2)
-    d.rectangle((9, 17, 55, 23), fill=v["hat_light"], outline=INK)
-    for x in range(12, 54, 3):
-        d.line([(x, 18), (x, 22)], fill=v["hat"])
-    girl_eye(d, 25, 41, EYES[pose], v)
-    girl_eye(d, 39, 41, EYES[pose], v)
-    blush(d, 47, 15, 43)
-    mouth = MOUTHS[pose]
-    if mouth == "talk":
-        d.chord((28, 47, 36, 55), 0, 180, fill=MOUTH)
-    elif mouth == "open_smile":
-        d.chord((27, 46, 37, 56), 0, 180, fill=MOUTH)
-        d.ellipse((30, 51, 34, 54), fill=TONGUE)
-    elif mouth == "o":
-        d.ellipse((30, 49, 34, 53), fill=MOUTH)
-    elif mouth == "flat":
-        d.line([(30, 50), (34, 50)], fill=INK)
-    else:
-        d.arc((28, 45, 36, 51), 30, 150, fill=INK)
-
-
-DRAW = {"duck": duck, "cat": cat, "frog": frog, "bunny": bunny, "roxie": roxie}
+DRAW = {"duck": duck, "cat": cat, "frog": frog, "bunny": bunny}
 BUDDIES = ["duck", "cat", "frog", "bunny", "roxie"]
 
 
 def buddy(name, pose="idle", variant="Blueberry"):
+    if name == "roxie":
+        return roxie_hd.roxie(pose, variant)
     img = Image.new("RGBA", (SIZE, SIZE), (0, 0, 0, 0))
     d = ImageDraw.Draw(img)
     DRAW[name](d, pose, base.VARIANTS[variant])
@@ -311,9 +262,55 @@ def sheet(path):
         by = y + 100
         ImageDraw.Draw(img).ellipse((bx, by, bx + disc, by + disc), fill=WHITE, outline=(200, 190, 235), width=3)
         face = buddy(name)
+        if face.width != SIZE:
+            face = face.resize((SIZE, SIZE), Image.LANCZOS)
         img.alpha_composite(face, (bx + (disc - SIZE) // 2, by + (disc - SIZE) // 2 + 2))
     img.convert("RGB").save(path)
 
 
+BRACE = ["...XXX", "..XX..", "..XX..", "..XX..", "..XX..", "XXX...",
+         "..XX..", "..XX..", "..XX..", "..XX..", "...XXX"]
+
+
+def rubber_duck():
+    """Classic side-view rubber duck, 40x40, for the launcher icon."""
+    p = PAL["duck"]
+    img = Image.new("RGBA", (40, 40), (0, 0, 0, 0))
+    d = ImageDraw.Draw(img)
+    d.polygon([(5, 25), (2, 14), (12, 22)], fill=p["body"])
+    d.ellipse((4, 18, 37, 37), fill=p["shade"])
+    d.ellipse((4, 18, 35, 35), fill=p["body"])
+    d.ellipse((18, 4, 35, 22), fill=p["body"])
+    d.ellipse((21, 6, 26, 10), fill=p["light"])
+    d.chord((11, 22, 26, 32), 0, 180, fill=p["shade"])
+    d.ellipse((31, 12, 39, 18), fill=p["beak"])
+    d.line([(32, 15), (38, 15)], fill=p["beak_shade"])
+    d.ellipse((27, 9, 30, 13), fill=INK)
+    d.point((27, 10), fill=WHITE)
+    d.ellipse((23, 14, 27, 16), fill=BLUSH)
+    return roxie_hd.outline(img)
+
+
+def icon(path, size=192):
+    """Launcher icon: a rubber duck between code braces on a dark editor-style disc."""
+    img = Image.new("RGBA", (size, size), (0, 0, 0, 0))
+    disc = base.gradient(size, size, (58, 50, 104), (28, 26, 56)).convert("RGBA")
+    mask = Image.new("L", (size, size), 0)
+    ImageDraw.Draw(mask).ellipse((0, 0, size - 1, size - 1), fill=255)
+    img.paste(disc, (0, 0), mask)
+    duck_img = rubber_duck().resize((120, 120), Image.NEAREST)
+    img.alpha_composite(duck_img, ((size - 120) // 2, (size - 120) // 2 + 4))
+    left = base.glyph(BRACE, 4, {"X": (255, 128, 176)})
+    right = base.glyph([row[::-1] for row in BRACE], 4, {"X": (128, 178, 255)})
+    y = (size - left.height) // 2 + 4
+    img.alpha_composite(left, (10, y))
+    img.alpha_composite(right, (size - 10 - right.width, y))
+    img.save(path)
+
+
 if __name__ == "__main__":
+    import sys
+
     sheet("/home/claw/assistant/outbox/roxie-buddies-sheet.png")
+    if len(sys.argv) > 1:
+        icon(sys.argv[1])
