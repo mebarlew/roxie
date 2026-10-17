@@ -177,13 +177,14 @@ MOUTHS = {"idle": "smile", "blink": "smile", "talking": "talk", "listening": "o"
 def outline(img):
     """Add a 1px outline around everything opaque."""
     px = img.load()
+    w, h = img.size
     edge = []
-    for y in range(SIZE):
-        for x in range(SIZE):
+    for y in range(h):
+        for x in range(w):
             if px[x, y][3]:
                 continue
             for nx, ny in ((x - 1, y), (x + 1, y), (x, y - 1), (x, y + 1)):
-                if 0 <= nx < SIZE and 0 <= ny < SIZE and px[nx, ny][3]:
+                if 0 <= nx < w and 0 <= ny < h and px[nx, ny][3]:
                     edge.append((x, y))
                     break
     for x, y in edge:
