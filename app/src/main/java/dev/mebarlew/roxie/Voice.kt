@@ -98,6 +98,12 @@ class Voice(private val context: Context, private val prefs: Prefs, private val 
         next?.invoke()
     }.also { tts = it }
 
+    /** Moves the mouth with sound played elsewhere, such as a Live answer: [isOpen] is asked every [MOUTH_WINDOW_MS]. */
+    fun mouthFollows(isOpen: () -> Boolean) {
+        stop()
+        startMouth(isOpen)
+    }
+
     fun stop() {
         generation++
         busy = false
@@ -163,7 +169,7 @@ class Voice(private val context: Context, private val prefs: Prefs, private val 
             player = mp
             mp.start()
             startMouth {
-                val i = mp.currentPosition / WINDOW_MS
+                val i = mp.currentPosition / MOUTH_WINDOW_MS
                 i < envelope.size && envelope[i]
             }
         } catch (e: Exception) {
@@ -222,7 +228,7 @@ class Voice(private val context: Context, private val prefs: Prefs, private val 
         val ticker = object : Runnable {
             override fun run() {
                 onMouth(isOpen())
-                main.postDelayed(this, WINDOW_MS.toLong())
+                main.postDelayed(this, MOUTH_WINDOW_MS.toLong())
             }
         }
         mouthTicker = ticker
@@ -235,7 +241,7 @@ class Voice(private val context: Context, private val prefs: Prefs, private val 
         onMouth(false)
     }
 
-    /** One flag per [WINDOW_MS] of audio: is the voice loud enough for an open mouth? */
+    /** One flag per [MOUTH_WINDOW_MS] of audio: is the voice loud enough for an open mouth? */
     private fun mouthEnvelope(wav: ByteArray): BooleanArray {
         val buf = ByteBuffer.wrap(wav).order(ByteOrder.LITTLE_ENDIAN)
         var dataStart = 44
@@ -252,25 +258,15 @@ class Voice(private val context: Context, private val prefs: Prefs, private val 
             if (len < 0) break
             pos += 8 + len
         }
-        val window = SAMPLE_RATE * WINDOW_MS / 1000
-        val count = (dataLen / 2 / window).coerceAtLeast(0)
-        val rms = DoubleArray(count) { w ->
-            var sum = 0.0
-            for (i in 0 until window) {
-                val s = buf.getShort(dataStart + (w * window + i) * 2).toDouble()
-                sum += s * s
-            }
-            sqrt(sum / window)
-        }
+        val rms = windowRms(wav, dataStart, dataLen, SAMPLE_RATE * MOUTH_WINDOW_MS / 1000)
         val threshold = (rms.maxOrNull() ?: 0.0) * 0.25
-        return BooleanArray(count) { rms[it] > threshold }
+        return BooleanArray(rms.size) { rms[it] > threshold }
     }
 
     private companion object {
         const val STYLE = "friendly, warm and upbeat"
         const val PREVIEW_LINE = "Hey! This is how I sound. Tap me whenever you need a hand."
         const val SAMPLE_RATE = 24_000
-        const val WINDOW_MS = 50
         const val MINUTE_MS = 60_000L
 
         /** Google's free voice is out of quota until this wall-clock time, so lines go straight to the phone's voice. */
@@ -280,6 +276,22 @@ class Voice(private val context: Context, private val prefs: Prefs, private val 
 }
 
 const val DEFAULT_VOICE = "Leda"
+
+/** How often the mouth can change, and the stretch of audio each open-or-shut decision covers. */
+const val MOUTH_WINDOW_MS = 50
+
+/** Loudness (RMS) of each [window] samples of 16-bit little-endian mono PCM, over [length] bytes from [start]. */
+fun windowRms(pcm: ByteArray, start: Int, length: Int, window: Int): DoubleArray {
+    val buf = ByteBuffer.wrap(pcm).order(ByteOrder.LITTLE_ENDIAN)
+    return DoubleArray((length / 2 / window).coerceAtLeast(0)) { w ->
+        var sum = 0.0
+        for (i in 0 until window) {
+            val s = buf.getShort(start + (w * window + i) * 2).toDouble()
+            sum += s * s
+        }
+        sqrt(sum / window)
+    }
+}
 
 /** Gemini's prebuilt voices with Google's one-word description of each. */
 val VOICES = listOf(
