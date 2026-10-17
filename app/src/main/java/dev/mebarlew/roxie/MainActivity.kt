@@ -38,6 +38,7 @@ import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.lightColorScheme
@@ -61,6 +62,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.delay
+import java.util.concurrent.Executors
 
 private val Ink = Color(0xFF34285C)
 
@@ -68,6 +70,10 @@ private val Ink = Color(0xFF34285C)
 class MainActivity : ComponentActivity() {
     private var refresh by mutableIntStateOf(0)
     private var voiceStatus by mutableStateOf("")
+    private var wakeOn by mutableStateOf(false)
+    private var wakeStatus by mutableStateOf("")
+    private var downloading = false
+    private val downloads = Executors.newSingleThreadExecutor()
     private lateinit var voice: Voice
     private val requestPermission =
         registerForActivityResult(ActivityResultContracts.RequestPermission()) { refresh++ }
@@ -78,6 +84,7 @@ class MainActivity : ComponentActivity() {
         keepColors(window.decorView)
         val prefs = Prefs(this)
         voice = Voice(this, prefs) {}
+        wakeOn = prefs.wakeWord
         setContent {
             SetupScreen(
                 refresh = refresh,
@@ -92,6 +99,9 @@ class MainActivity : ComponentActivity() {
                     startActivity(Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, Uri.parse("package:$packageName")))
                 },
                 onScreen = { startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)) },
+                wakeOn = wakeOn,
+                wakeStatus = wakeStatus,
+                onWakeWord = { on -> setWakeWord(prefs, on) },
                 onPermission = { requestPermission.launch(it) },
                 onWake = {
                     startForegroundService(Intent(this, BubbleService::class.java))
@@ -109,7 +119,35 @@ class MainActivity : ComponentActivity() {
 
     override fun onDestroy() {
         voice.shutdown()
+        downloads.shutdownNow()
         super.onDestroy()
+    }
+
+    /** Switching on the first time downloads the on-device speech model, then turns it on. */
+    private fun setWakeWord(prefs: Prefs, on: Boolean) {
+        if (downloading) return
+        if (!on || WakeWord.isDownloaded(this)) {
+            prefs.wakeWord = on
+            wakeOn = on
+            return
+        }
+        downloading = true
+        wakeStatus = "Downloading its ears (about 40 MB)…"
+        downloads.execute {
+            val result = runCatching {
+                WakeWord.download(this) { pct -> runOnUiThread { wakeStatus = "Downloading its ears… $pct%" } }
+            }
+            runOnUiThread {
+                downloading = false
+                result.onSuccess {
+                    prefs.wakeWord = true
+                    wakeOn = true
+                    wakeStatus = ""
+                }.onFailure {
+                    wakeStatus = "Download failed. Check the internet and try again."
+                }
+            }
+        }
     }
 }
 
@@ -121,6 +159,9 @@ private fun SetupScreen(
     onVoice: (String) -> Unit,
     onOverlay: () -> Unit,
     onScreen: () -> Unit,
+    wakeOn: Boolean,
+    wakeStatus: String,
+    onWakeWord: (Boolean) -> Unit,
     onPermission: (String) -> Unit,
     onWake: () -> Unit,
     onSleep: () -> Unit,
@@ -180,6 +221,7 @@ private fun SetupScreen(
                 voiceName = it
                 onVoice(it)
             }
+            WakeWordCard(wakeOn, wakeStatus, onWakeWord)
             Step("Float over your apps", "So $title can sit on top of anything", overlayOk, onOverlay)
             Step("Hear you", "Tap, talk, $title listens", micOk) { onPermission(Manifest.permission.RECORD_AUDIO) }
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
@@ -287,6 +329,27 @@ private fun VoicePicker(selected: String, accent: Color, status: String, onPick:
             }
         }
         if (status.isNotEmpty()) Text(status, fontSize = 13.sp, color = Ink.copy(alpha = 0.7f))
+    }
+}
+
+@Composable
+private fun WakeWordCard(on: Boolean, status: String, onToggle: (Boolean) -> Unit) {
+    Card(
+        shape = RoundedCornerShape(20.dp),
+        colors = CardDefaults.cardColors(containerColor = Color.White),
+        modifier = Modifier.fillMaxWidth(),
+    ) {
+        Row(Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
+            Column(Modifier.weight(1f)) {
+                Text("Wake on \"${WakeWord.PHRASE}\"", fontWeight = FontWeight.Bold, color = Ink)
+                Text(
+                    status.ifEmpty { "Listens on the phone only. Android's green mic dot stays on while it waits." },
+                    fontSize = 13.sp,
+                    color = Ink.copy(alpha = 0.6f),
+                )
+            }
+            Switch(checked = on, onCheckedChange = onToggle)
+        }
     }
 }
 

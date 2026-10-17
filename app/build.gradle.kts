@@ -11,10 +11,12 @@ android {
         applicationId = "dev.mebarlew.roxie"
         minSdk = 26
         targetSdk = 36
-        versionCode = 4
-        versionName = "0.3.1"
+        versionCode = 5
+        versionName = "0.4.0"
         buildConfigField("String", "GATEWAY_URL", "\"https://ai-gateway.mebarlew.workers.dev\"")
         buildConfigField("String", "GATEWAY_KEY", "\"${System.getenv("ROXIE_GATEWAY_KEY").orEmpty()}\"")
+        // Vosk ships a ~10 MB native library per ABI; phones are ARM.
+        ndk { abiFilters += listOf("arm64-v8a", "armeabi-v7a") }
     }
 
     signingConfigs {
@@ -49,4 +51,7 @@ dependencies {
     implementation(platform("androidx.compose:compose-bom:2026.09.00"))
     implementation("androidx.compose.material3:material3")
     implementation("androidx.activity:activity-compose:1.13.0")
+    // On-device wake word. @aar takes the Android JNA build instead of the desktop jar Vosk's POM pulls in.
+    implementation("net.java.dev.jna:jna:5.18.1@aar")
+    implementation("com.alphacephei:vosk-android:0.3.75@aar")
 }

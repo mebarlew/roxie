@@ -35,6 +35,7 @@ class BubbleService : Service() {
     private lateinit var prefs: Prefs
     private lateinit var brain: Brain
     private lateinit var voice: Voice
+    private lateinit var wake: WakeWord
     private lateinit var buddyView: BuddyView
     private lateinit var bubble: SpeechBubbleView
     private lateinit var buddyParams: WindowManager.LayoutParams
@@ -46,6 +47,7 @@ class BubbleService : Service() {
     private var lastMouthAt = 0L
     private var typing = false
     private var dragging = false
+    private var waking = false
     private var happyUntil = 0L
     private var lastAnswer = ""
     private var screen: ByteArray? = null
@@ -60,6 +62,7 @@ class BubbleService : Service() {
             mouthOpen = open
             if (open) lastMouthAt = SystemClock.uptimeMillis()
         }
+        wake = WakeWord(this, ::onWakeWord)
         windows = getSystemService(Context.WINDOW_SERVICE) as WindowManager
         startInForeground()
         addOverlays()
@@ -76,6 +79,7 @@ class BubbleService : Service() {
         main.removeCallbacksAndMessages(null)
         bubble.stopTyping()
         recognizer?.destroy()
+        wake.shutdown()
         voice.shutdown()
         io.shutdownNow()
         windows.removeView(bubble)
@@ -171,6 +175,15 @@ class BubbleService : Service() {
         lookAtScreen { if (fresh) greet() else startListening() }
     }
 
+    /** "Hey ducky": like a tap, but straight to listening so the rest of your sentence isn't talked over. */
+    private fun onWakeWord() {
+        waking = true
+        voice.stop()
+        bubble.stopTyping()
+        typing = false
+        lookAtScreen { startListening() }
+    }
+
     /** Grabs the screen without the speech bubble in the way, when screen reading is switched on. */
     private fun lookAtScreen(then: () -> Unit) {
         screen = null
@@ -199,6 +212,9 @@ class BubbleService : Service() {
     }
 
     private fun startListening() {
+        waking = false
+        // Only one recognizer can have the mic.
+        wake.listening = false
         if (!SpeechRecognizer.isRecognitionAvailable(this)) {
             mode = Mode.IDLE
             showBubble("I can't find a speech recognizer on this phone, so I can't hear you yet.")
@@ -341,6 +357,8 @@ class BubbleService : Service() {
             buddyView.ringColor = CANDY.getValue(prefs.color)
             buddyView.lipSync = if (speaking()) mouthOpen else null
             buddyView.anim = currentAnim()
+            wake.listening = prefs.wakeWord && !waking && !dragging && !typing && !voice.busy &&
+                (mode == Mode.IDLE || mode == Mode.ANSWERING)
             main.postDelayed(this, 50L)
         }
     }
