@@ -1,5 +1,6 @@
 package dev.mebarlew.roxie
 
+import android.Manifest
 import android.accessibilityservice.AccessibilityService
 import android.app.Notification
 import android.app.NotificationChannel
@@ -8,6 +9,7 @@ import android.app.PendingIntent
 import android.app.Service
 import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.content.pm.ServiceInfo
 import android.graphics.PixelFormat
 import android.graphics.drawable.Icon
@@ -405,12 +407,24 @@ class BubbleService : Service() {
     private fun startLive() {
         // Only one recorder can have the mic.
         wake.listening = false
+        // On Android 10+ a call always keeps the mic, so a session now would only ever hear silence.
+        if (audio.mode == AudioManager.MODE_IN_CALL || audio.mode == AudioManager.MODE_IN_COMMUNICATION) {
+            mode = Mode.IDLE
+            showBubble("You're on a call. I'll be here after!")
+            return
+        }
         val gen = ++liveGen
         val audioOut = LiveAudio(this, ::onLiveMic) { if (gen == liveGen) endLive("My ears glitched. Tap me to try again!") }
         if (!audioOut.startMic()) {
             audioOut.release()
             mode = Mode.IDLE
-            showBubble("I need the microphone permission. Open Rubber Duck Assistant to fix it.")
+            showBubble(
+                if (checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
+                    "I need the microphone permission. Open Rubber Duck Assistant to fix it."
+                } else {
+                    "Another app is using the mic right now. Try me again in a moment!"
+                },
+            )
             return
         }
         liveAudio = audioOut
