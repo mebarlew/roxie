@@ -10,6 +10,7 @@ import android.content.Intent
 import android.content.pm.ServiceInfo
 import android.graphics.PixelFormat
 import android.graphics.drawable.Icon
+import android.media.AudioManager
 import android.os.Build
 import android.os.Bundle
 import android.os.Handler
@@ -32,6 +33,7 @@ class BubbleService : Service() {
     private val main = Handler(Looper.getMainLooper())
     private val io = Executors.newSingleThreadExecutor()
     private lateinit var windows: WindowManager
+    private lateinit var audio: AudioManager
     private lateinit var prefs: Prefs
     private lateinit var brain: Brain
     private lateinit var voice: Voice
@@ -65,6 +67,7 @@ class BubbleService : Service() {
         }
         wake = WakeWord(this, ::onWakeWord)
         windows = getSystemService(Context.WINDOW_SERVICE) as WindowManager
+        audio = getSystemService(Context.AUDIO_SERVICE) as AudioManager
         startInForeground()
         addOverlays()
         main.post(animator)
@@ -369,8 +372,9 @@ class BubbleService : Service() {
             buddyView.ringColor = CANDY.getValue(prefs.color)
             buddyView.lipSync = if (speaking()) mouthOpen else null
             buddyView.anim = currentAnim()
+            // Paused while anything plays media: speech in a video was enough to wake it.
             wake.listening = prefs.wakeWord && !waking && !dragging && !typing && !voice.busy &&
-                (mode == Mode.IDLE || mode == Mode.ANSWERING)
+                !audio.isMusicActive && (mode == Mode.IDLE || mode == Mode.ANSWERING)
             main.postDelayed(this, 50L)
         }
     }
