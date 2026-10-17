@@ -35,7 +35,7 @@ PAL = {
 
 @dataclass(frozen=True)
 class Frame:
-    eyes: str = "open"  # open, closed, half, happy, sleepy, up, left, right, squint
+    eyes: str = "open"  # open, closed, happy, sleepy, up, left, right, squint
     mouth: str = "smile"  # smile, flat, o, talk1, talk2, open_smile
     ears: str = "rest"  # rest, perk, wiggleL, wiggleR, droop (tuft, ears or eye bumps)
     dy: int = 0  # bob in sprite pixels, negative is up
@@ -55,8 +55,8 @@ def head(d, box, p):
     d.ellipse((x0 + 7, y0 + 5, x0 + 14, y0 + 10), fill=p["light"])
 
 
-def eye(d, cx, cy, state, side, lid, sclera=False):
-    """side is -1 for the left eye and 1 for the right; lid is the colour around the eye."""
+def eye(d, cx, cy, state, side, sclera=False):
+    """side is -1 for the left eye and 1 for the right."""
     if state == "closed":
         d.line([(cx - 3, cy + 1), (cx + 3, cy + 1)], fill=INK, width=2)
     elif state == "happy":
@@ -75,9 +75,6 @@ def eye(d, cx, cy, state, side, lid, sclera=False):
         d.ellipse((x - 3, y - 4, x + 3, y + 4), fill=INK)
         d.rectangle((x - 2, y - 3, x - 1, y - 2), fill=WHITE)
         d.point((x + 1, y + 2), fill=WHITE)
-        if state == "half":
-            d.rectangle((cx - r - 1, cy - r - 1, cx + r + 1, cy - 1), fill=lid)
-            d.line([(cx - r, cy - 1), (cx + r, cy - 1)], fill=INK, width=2)
 
 
 def blush(d, y, left, right):
@@ -85,9 +82,9 @@ def blush(d, y, left, right):
         d.ellipse((x, y, x + 6, y + 3), fill=BLUSH)
 
 
-def eyes(d, left, right, y, state, lid, sclera=False):
-    eye(d, left, y, state, -1, lid, sclera)
-    eye(d, right, y, state, 1, lid, sclera)
+def eyes(d, left, right, y, state):
+    eye(d, left, y, state, -1)
+    eye(d, right, y, state, 1)
 
 
 TUFT = {"rest": [(24, 5), (33, 2), (42, 6)], "perk": [(24, 3), (33, 0), (42, 4)],
@@ -101,7 +98,7 @@ def duck(d, f):
     for (a, b), tip in zip(bases, TUFT[f.ears]):
         d.polygon([a, tip, b], fill=p["body"])
     head(d, (9, 13, 55, 58), p)
-    eyes(d, 23, 41, 33, f.eyes, p["body"])
+    eyes(d, 23, 41, 33, f.eyes)
     blush(d, 40, 11, 46)
     open_by = {"talk2": 0, "open_smile": 0, "talk1": 1, "o": 2}
     if f.mouth in open_by:
@@ -132,7 +129,7 @@ def cat(d, f):
     head(d, (7, 14, 57, 56), p)
     for x0, x1 in ((27, 28), (32, 32), (37, 36)):
         d.line([(x0, 15), (x1, 20)], fill=p["shade"], width=2)
-    eyes(d, 22, 42, 34, f.eyes, p["body"])
+    eyes(d, 22, 42, 34, f.eyes)
     blush(d, 40, 11, 47)
     d.polygon([(30, 39), (34, 39), (32, 41)], fill=p["nose"])
     if f.mouth in ("talk2", "open_smile"):
@@ -161,7 +158,7 @@ FROG_LIFT = {"rest": (0, 0), "perk": (-2, -2), "wiggleL": (-2, 0), "wiggleR": (0
 
 def frog(d, f):
     p = PAL["frog"]
-    sclera = f.eyes in ("open", "up", "left", "right", "half")
+    sclera = f.eyes in ("open", "up", "left", "right")
     bumps = [(8, 7 + dy, 30, 29 + dy) if i == 0 else (33, 7 + dy, 55, 29 + dy)
              for i, dy in enumerate(FROG_LIFT[f.ears])]
     for box in bumps:
@@ -170,8 +167,8 @@ def frog(d, f):
     for box in bumps:
         d.chord(box, 180, 360, fill=p["body"])
     (l, r) = FROG_LIFT[f.ears]
-    eye(d, 19, 19 + l, f.eyes, -1, p["body"], sclera)
-    eye(d, 44, 19 + r, f.eyes, 1, p["body"], sclera)
+    eye(d, 19, 19 + l, f.eyes, -1, sclera)
+    eye(d, 44, 19 + r, f.eyes, 1, sclera)
     blush(d, 40, 9, 48)
     d.point((29, 35), fill=p["shade"])
     d.point((34, 35), fill=p["shade"])
@@ -210,7 +207,7 @@ def bunny(d, f):
     bunny_ear(d, (14, top, 27, 34), p, -1 if flop_l else 0)
     bunny_ear(d, (36, top, 49, 34), p, 1 if flop_r else 0)
     head(d, (10, 21, 54, 61), p)
-    eyes(d, 23, 41, 40, f.eyes, p["body"])
+    eyes(d, 23, 41, 40, f.eyes)
     blush(d, 46, 12, 45)
     d.ellipse((30, 45, 34, 48), fill=p["nose"])
     if f.mouth in ("talk2", "open_smile"):
@@ -246,7 +243,7 @@ def rubber(d, f):
     d.line([(20, 40 + w), (30, 39 + w)], fill=p["light"])
     d.ellipse((28, 6, 56, 35), fill=p["body"])
     d.ellipse((33, 9, 41, 15), fill=p["light"])
-    eye(d, 45, 18, f.eyes, 1, p["body"])
+    eye(d, 45, 18, f.eyes, 1)
     d.ellipse((37, 24, 43, 27), fill=BLUSH)
     open_by = {"talk2": 0, "open_smile": 0, "talk1": 2, "o": 3}
     if f.mouth in open_by:
