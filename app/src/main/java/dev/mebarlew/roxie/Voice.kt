@@ -20,7 +20,7 @@ import kotlin.math.sqrt
  * The buddy's voice: Gemini TTS through the gateway, cached on disk, with the phone's own TTS as the
  * fallback (Google's free tier allows only a few TTS requests a minute). [onMouth] drives lip-sync.
  */
-class Voice(private val context: Context, private val onMouth: (Boolean) -> Unit) {
+class Voice(private val context: Context, private val prefs: Prefs, private val onMouth: (Boolean) -> Unit) {
     private val io = Executors.newSingleThreadExecutor()
     private val main = Handler(Looper.getMainLooper())
     private var player: MediaPlayer? = null
@@ -45,10 +45,34 @@ class Voice(private val context: Context, private val onMouth: (Boolean) -> Unit
         }
         val request = generation
         io.execute {
-            val file = runCatching { cachedSpeech(text) }.getOrNull()
+            val file = runCatching { cachedSpeech(text, prefs.voice) }.getOrNull()
             main.post {
                 if (request != generation) return@post
                 if (file != null) play(file, text, onDone) else speakOnDevice(text, onDone)
+            }
+        }
+    }
+
+    /** Plays a sample of [voice], even in silent mode since you asked for it. [onResult] gets an error to show, or null. */
+    fun preview(voice: String, onResult: (String?) -> Unit) {
+        stop()
+        val request = generation
+        io.execute {
+            val result = runCatching { cachedSpeech(PREVIEW_LINE, voice) }
+            main.post {
+                if (request != generation) return@post
+                result.onSuccess { file ->
+                    play(file, PREVIEW_LINE) {}
+                    onResult(null)
+                }.onFailure { e ->
+                    onResult(
+                        if (e is GatewayError && e.code == 429) {
+                            "The free voice allows only a few clips a minute. Try again in a minute."
+                        } else {
+                            "Couldn't load $voice. Is the internet on?"
+                        },
+                    )
+                }
             }
         }
     }
@@ -67,12 +91,12 @@ class Voice(private val context: Context, private val onMouth: (Boolean) -> Unit
         io.shutdownNow()
     }
 
-    private fun cachedSpeech(text: String): File {
-        val digest = MessageDigest.getInstance("SHA-1").digest("$VOICE|$STYLE|$text".toByteArray())
+    private fun cachedSpeech(text: String, voice: String): File {
+        val digest = MessageDigest.getInstance("SHA-1").digest("$voice|$STYLE|$text".toByteArray())
         val file = File(context.cacheDir, "tts-${digest.joinToString("") { "%02x".format(it) }}.wav")
         if (!file.exists()) {
             val part = File(file.path + ".part")
-            part.writeBytes(Gateway.speech(text, VOICE, STYLE))
+            part.writeBytes(Gateway.speech(text, voice, STYLE))
             part.renameTo(file)
         }
         return file
@@ -197,9 +221,23 @@ class Voice(private val context: Context, private val onMouth: (Boolean) -> Unit
     }
 
     private companion object {
-        const val VOICE = "Leda"
-        const val STYLE = "cheerful, playful and cute"
+        const val STYLE = "friendly, warm and upbeat"
+        const val PREVIEW_LINE = "Hey! This is how I sound. Tap me whenever you need a hand."
         const val SAMPLE_RATE = 24_000
         const val WINDOW_MS = 50
     }
 }
+
+const val DEFAULT_VOICE = "Leda"
+
+/** Gemini's prebuilt voices with Google's one-word description of each. */
+val VOICES = listOf(
+    "Zephyr" to "Bright", "Puck" to "Upbeat", "Charon" to "Informative", "Kore" to "Firm",
+    "Fenrir" to "Excitable", "Leda" to "Youthful", "Orus" to "Firm", "Aoede" to "Breezy",
+    "Callirrhoe" to "Easy-going", "Autonoe" to "Bright", "Enceladus" to "Breathy", "Iapetus" to "Clear",
+    "Umbriel" to "Easy-going", "Algieba" to "Smooth", "Despina" to "Smooth", "Erinome" to "Clear",
+    "Algenib" to "Gravelly", "Rasalgethi" to "Informative", "Laomedeia" to "Upbeat", "Achernar" to "Soft",
+    "Alnilam" to "Firm", "Schedar" to "Even", "Gacrux" to "Mature", "Pulcherrima" to "Forward",
+    "Achird" to "Friendly", "Zubenelgenubi" to "Casual", "Vindemiatrix" to "Gentle", "Sadachbia" to "Lively",
+    "Sadaltager" to "Knowledgeable", "Sulafat" to "Warm",
+)

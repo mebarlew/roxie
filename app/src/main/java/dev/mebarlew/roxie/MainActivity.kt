@@ -1,6 +1,7 @@
 package dev.mebarlew.roxie
 
 import android.Manifest
+import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
@@ -66,6 +67,8 @@ private val Ink = Color(0xFF34285C)
 /** Setup: pick a buddy and colour, your name, the permissions it needs, and the switch that wakes it up. */
 class MainActivity : ComponentActivity() {
     private var refresh by mutableIntStateOf(0)
+    private var voiceStatus by mutableStateOf("")
+    private lateinit var voice: Voice
     private val requestPermission =
         registerForActivityResult(ActivityResultContracts.RequestPermission()) { refresh++ }
 
@@ -73,13 +76,21 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
         val prefs = Prefs(this)
+        voice = Voice(this, prefs) {}
         setContent {
             SetupScreen(
                 refresh = refresh,
                 prefs = prefs,
+                voiceStatus = voiceStatus,
+                onVoice = { name ->
+                    prefs.voice = name
+                    voiceStatus = "Loading $name…"
+                    voice.preview(name) { error -> voiceStatus = error.orEmpty() }
+                },
                 onOverlay = {
                     startActivity(Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, Uri.parse("package:$packageName")))
                 },
+                onScreen = { startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)) },
                 onPermission = { requestPermission.launch(it) },
                 onWake = {
                     startForegroundService(Intent(this, BubbleService::class.java))
@@ -94,13 +105,21 @@ class MainActivity : ComponentActivity() {
         super.onResume()
         refresh++
     }
+
+    override fun onDestroy() {
+        voice.shutdown()
+        super.onDestroy()
+    }
 }
 
 @Composable
 private fun SetupScreen(
     refresh: Int,
     prefs: Prefs,
+    voiceStatus: String,
+    onVoice: (String) -> Unit,
     onOverlay: () -> Unit,
+    onScreen: () -> Unit,
     onPermission: (String) -> Unit,
     onWake: () -> Unit,
     onSleep: () -> Unit,
@@ -112,8 +131,10 @@ private fun SetupScreen(
     val notifyOk = remember(refresh) {
         Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU || granted(context, Manifest.permission.POST_NOTIFICATIONS)
     }
+    val screenOk = remember(refresh) { screenReaderOn(context) }
     var buddy by remember { mutableStateOf(prefs.buddy) }
     var color by remember { mutableStateOf(prefs.color) }
+    var voiceName by remember { mutableStateOf(prefs.voice) }
     val accent = Color(CANDY.getValue(color))
     val title = buddy.title
 
@@ -154,8 +175,20 @@ private fun SetupScreen(
                 color = it
                 prefs.color = it
             }
+            VoicePicker(voiceName, accent, voiceStatus) {
+                voiceName = it
+                onVoice(it)
+            }
             Step("Float over your apps", "So $title can sit on top of anything", overlayOk, onOverlay)
             Step("Hear you", "Tap, talk, $title listens", micOk) { onPermission(Manifest.permission.RECORD_AUDIO) }
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                Step(
+                    "See your screen",
+                    "Only when you tap $title and ask. If Android says \"Restricted setting\": App info → ⋮ → Allow restricted settings, then try again.",
+                    screenOk,
+                    onScreen,
+                )
+            }
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
                 Step("Stay awake", "Android needs a small notification for that", notifyOk) {
                     onPermission(Manifest.permission.POST_NOTIFICATIONS)
@@ -230,6 +263,33 @@ private fun BuddyPicker(selected: Buddy, accent: Color, onPick: (Buddy) -> Unit)
 }
 
 @Composable
+private fun VoicePicker(selected: String, accent: Color, status: String, onPick: (String) -> Unit) {
+    Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Text("Voice · tap one to hear it", fontWeight = FontWeight.Bold, color = Ink)
+        Row(
+            Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            VOICES.forEach { (name, character) ->
+                val shape = RoundedCornerShape(14.dp)
+                Column(
+                    Modifier
+                        .clip(shape)
+                        .background(Color.White)
+                        .border(3.dp, if (name == selected) accent else Color.White, shape)
+                        .clickable { onPick(name) }
+                        .padding(horizontal = 12.dp, vertical = 8.dp),
+                ) {
+                    Text(name, fontSize = 14.sp, fontWeight = FontWeight.Bold, color = Ink)
+                    Text(character, fontSize = 12.sp, color = Ink.copy(alpha = 0.6f))
+                }
+            }
+        }
+        if (status.isNotEmpty()) Text(status, fontSize = 13.sp, color = Ink.copy(alpha = 0.7f))
+    }
+}
+
+@Composable
 private fun ColorPicker(selected: String, onPick: (String) -> Unit) {
     Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Text("Bubble colour", fontWeight = FontWeight.Bold, color = Ink)
@@ -267,6 +327,12 @@ private fun Step(title: String, subtitle: String, done: Boolean, onClick: () -> 
             }
         }
     }
+}
+
+private fun screenReaderOn(context: Context): Boolean {
+    val me = ComponentName(context, ScreenReader::class.java)
+    val enabled = Settings.Secure.getString(context.contentResolver, Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES)
+    return enabled.orEmpty().split(':').any { ComponentName.unflattenFromString(it) == me }
 }
 
 private fun granted(context: Context, permission: String) =

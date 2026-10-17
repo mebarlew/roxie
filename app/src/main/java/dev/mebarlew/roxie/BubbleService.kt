@@ -48,6 +48,7 @@ class BubbleService : Service() {
     private var dragging = false
     private var happyUntil = 0L
     private var lastAnswer = ""
+    private var screen: ByteArray? = null
 
     override fun onBind(intent: Intent?): IBinder? = null
 
@@ -55,7 +56,7 @@ class BubbleService : Service() {
         super.onCreate()
         prefs = Prefs(this)
         brain = Brain(prefs)
-        voice = Voice(this) { open ->
+        voice = Voice(this, prefs) { open ->
             mouthOpen = open
             if (open) lastMouthAt = SystemClock.uptimeMillis()
         }
@@ -149,19 +150,37 @@ class BubbleService : Service() {
     }
 
     private fun onBuddyTap() {
-        when (mode) {
-            Mode.IDLE, Mode.ANSWERING -> greet()
-            Mode.GREETING -> {
-                voice.stop()
-                startListening()
-            }
-            Mode.LISTENING -> {
-                recognizer?.cancel()
-                mode = Mode.IDLE
-                showBubble("Okay, I'll be right here!")
-            }
-            Mode.THINKING -> Unit
+        if (mode == Mode.LISTENING) {
+            recognizer?.cancel()
+            mode = Mode.IDLE
+            showBubble("Okay, I'll be right here!")
+            return
         }
+        // A tap always cuts the buddy off: no waiting for it to finish talking or thinking.
+        val fresh = mode == Mode.IDLE
+        voice.stop()
+        bubble.stopTyping()
+        typing = false
+        lookAtScreen { if (fresh) greet() else startListening() }
+    }
+
+    /** Grabs the screen without the speech bubble in the way, when screen reading is switched on. */
+    private fun lookAtScreen(then: () -> Unit) {
+        screen = null
+        val reader = ScreenReader.instance
+        if (reader == null || Build.VERSION.SDK_INT < Build.VERSION_CODES.R) {
+            then()
+            return
+        }
+        bubble.visibility = View.INVISIBLE
+        main.postDelayed({
+            reader.capture { jpeg ->
+                main.post {
+                    screen = jpeg
+                    then()
+                }
+            }
+        }, BUBBLE_HIDE_MS)
     }
 
     private fun greet() {
@@ -181,6 +200,7 @@ class BubbleService : Service() {
         val r = recognizer ?: SpeechRecognizer.createSpeechRecognizer(this).also { recognizer = it }
         r.setRecognitionListener(listener)
         mode = Mode.LISTENING
+        showBubble("🎤 I'm listening…", animate = false)
         r.startListening(
             Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH)
                 .putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
@@ -234,10 +254,12 @@ class BubbleService : Service() {
 
     private fun ask(question: String) {
         mode = Mode.THINKING
-        showBubble("🎤 $question", animate = false)
+        val shot = screen
+        screen = null
+        showBubble("${if (shot != null) "👀" else "🎤"} $question", animate = false)
         io.execute {
             val answer = try {
-                brain.ask(question)
+                brain.ask(question, shot)
             } catch (e: GatewayError) {
                 when (e.code) {
                     429 -> "I'm all out of brain juice for now. Give me a little break and try again!"
@@ -339,5 +361,8 @@ class BubbleService : Service() {
         private const val CHANNEL = "roxie"
         private const val NOTIFICATION_ID = 1
         private const val SPEECH_GAP_MS = 400L
+
+        /** Long enough for the hidden speech bubble to leave the screen before the screenshot. */
+        private const val BUBBLE_HIDE_MS = 80L
     }
 }

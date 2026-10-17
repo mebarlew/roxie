@@ -13,6 +13,11 @@ class Prefs(context: Context) {
         get() = Buddy.of(sp.getString("buddy", null).orEmpty())
         set(value) = sp.edit().putString("buddy", value.id).apply()
 
+    /** One of the Gemini voices in [VOICES]. */
+    var voice: String
+        get() = sp.getString("voice", null)?.takeIf { v -> VOICES.any { it.first == v } } ?: DEFAULT_VOICE
+        set(value) = sp.edit().putString("voice", value).apply()
+
     /** A key of [CANDY]: the colour of the ring around the floating bubble. */
     var color: String
         get() = sp.getString("color", null)?.takeIf { it in CANDY } ?: CANDY.keys.first()
