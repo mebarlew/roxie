@@ -249,7 +249,14 @@ class SpeechBubbleView(
     private var message = ""
 
     /** Distance from the bubble's top to the tip of its tail. */
-    val tailY: Int get() = shape.tailY.toInt()
+    var tailY: Int
+        get() = shape.tailY.toInt()
+        set(value) {
+            shape.tailY = value.toFloat()
+        }
+
+    /** The tail's highest spot, just under the rounded corner, where it sits by default. */
+    val topTailY: Int get() = shape.topTailY.toInt()
 
     var tailOnLeft: Boolean
         get() = shape.tailOnLeft
@@ -352,7 +359,14 @@ class SpeechBubbleView(
 /** White comic bubble with a thick ink outline and a tail on the left or right. */
 class BubbleDrawable(dp: Float) : Drawable() {
     val tailWidth = 12 * dp
-    val tailY = 30 * dp
+    val topTailY = 30 * dp
+
+    /** Where the tail's tip sits, from the top; [draw] keeps it on the straight edge between the corners. */
+    var tailY = topTailY
+        set(value) {
+            field = value
+            invalidateSelf()
+        }
     var tailOnLeft = true
         set(value) {
             field = value
@@ -377,15 +391,16 @@ class BubbleDrawable(dp: Float) : Drawable() {
             b.right - inset - if (tailOnLeft) 0f else tailWidth,
             b.bottom - inset,
         )
+        val tip = tailY.coerceAtMost(b.height() - radius - tailWidth * 0.4f).coerceAtLeast(topTailY)
         val tail = Path().apply {
             if (tailOnLeft) {
-                moveTo(body.left + 1, tailY - tailWidth)
-                lineTo(b.left + inset, tailY)
-                lineTo(body.left + 1, tailY + tailWidth * 0.4f)
+                moveTo(body.left + 1, tip - tailWidth)
+                lineTo(b.left + inset, tip)
+                lineTo(body.left + 1, tip + tailWidth * 0.4f)
             } else {
-                moveTo(body.right - 1, tailY - tailWidth)
-                lineTo(b.right - inset, tailY)
-                lineTo(body.right - 1, tailY + tailWidth * 0.4f)
+                moveTo(body.right - 1, tip - tailWidth)
+                lineTo(b.right - inset, tip)
+                lineTo(body.right - 1, tip + tailWidth * 0.4f)
             }
             close()
         }

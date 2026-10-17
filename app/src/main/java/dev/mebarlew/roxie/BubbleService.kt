@@ -369,8 +369,10 @@ class BubbleService : Service() {
         bubbleParams.height = h
         bubbleParams.x = (if (onRight) buddyParams.x - w - gap else buddyParams.x + size + gap)
             .coerceIn(0, (screen.widthPixels - w).coerceAtLeast(0))
-        bubbleParams.y = (buddyParams.y + (size * 0.62f).toInt() - bubble.tailY)
-            .coerceIn(0, (screen.heightPixels - h).coerceAtLeast(0))
+        val mouthY = buddyParams.y + (size * 0.62f).toInt()
+        bubbleParams.y = (mouthY - bubble.topTailY).coerceIn(0, (screen.heightPixels - h).coerceAtLeast(0))
+        // Pushed up off a buddy low on the screen, the bubble moves its tail down so it still points at the mouth.
+        bubble.tailY = mouthY - bubbleParams.y
         windows.updateViewLayout(bubble, bubbleParams)
     }
 
