@@ -6,7 +6,14 @@ import org.json.JSONObject
 import java.net.HttpURLConnection
 import java.net.URL
 
-class GatewayError(val code: Int, body: String) : Exception("HTTP $code: ${body.take(300)}")
+class GatewayError(val code: Int, body: String) : Exception("HTTP $code: ${body.take(300)}") {
+    /** How long Google says to wait, from the RetryInfo in its 429 body: seconds for a per-minute cap, hours for the daily one. */
+    val retryAfterMs: Long? = RETRY_DELAY.find(body)?.groupValues?.get(1)?.toDoubleOrNull()?.let { (it * 1000).toLong() }
+
+    private companion object {
+        val RETRY_DELAY = Regex("\"retryDelay\"\\s*:\\s*\"([\\d.]+)s\"")
+    }
+}
 
 /** Bart's AI gateway. Blocking calls: run them off the main thread. */
 object Gateway {

@@ -11,8 +11,8 @@ android {
         applicationId = "dev.mebarlew.roxie"
         minSdk = 26
         targetSdk = 36
-        versionCode = 7
-        versionName = "0.4.2"
+        versionCode = 8
+        versionName = "0.4.3"
         buildConfigField("String", "GATEWAY_URL", "\"https://ai-gateway.mebarlew.workers.dev\"")
         buildConfigField("String", "GATEWAY_KEY", "\"${System.getenv("ROXIE_GATEWAY_KEY").orEmpty()}\"")
         // Vosk ships a ~10 MB native library per ABI; phones are ARM.

@@ -13,6 +13,8 @@ import java.io.File
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import java.security.MessageDigest
+import java.text.DateFormat
+import java.util.Date
 import java.util.concurrent.Executors
 import kotlin.math.sqrt
 
@@ -25,6 +27,10 @@ class Voice(private val context: Context, private val prefs: Prefs, private val 
     private val main = Handler(Looper.getMainLooper())
     private var player: MediaPlayer? = null
     private var tts: TextToSpeech? = null
+
+    /** null while the phone's TTS engine is still starting, then whether it started. */
+    private var deviceVoiceOk: Boolean? = null
+    private var whenDeviceVoiceStarts: (() -> Unit)? = null
     private var mouthTicker: Runnable? = null
     private var generation = 0
 
@@ -74,21 +80,28 @@ class Voice(private val context: Context, private val prefs: Prefs, private val 
                     play(file, PREVIEW_LINE) {}
                     onResult(null)
                 }.onFailure { e ->
-                    onResult(
-                        if (e is GatewayError && e.code == 429) {
-                            "The free voice allows only a few clips a minute. Try again in a minute."
-                        } else {
-                            "Couldn't load $voice. Is the internet on?"
-                        },
-                    )
+                    onResult(if (e is GatewayError && e.code == 429) quotaMessage() else "Couldn't load $voice. Is the internet on?")
                 }
             }
         }
     }
 
+    /** Starts the phone's own voice early, so the first line that falls back to it doesn't wait for the engine. */
+    fun warmUp() {
+        deviceVoice()
+    }
+
+    private fun deviceVoice(): TextToSpeech = tts ?: TextToSpeech(context) { status ->
+        deviceVoiceOk = status == TextToSpeech.SUCCESS
+        val next = whenDeviceVoiceStarts
+        whenDeviceVoiceStarts = null
+        next?.invoke()
+    }.also { tts = it }
+
     fun stop() {
         generation++
         busy = false
+        whenDeviceVoiceStarts = null
         stopMouth()
         player?.release()
         player = null
@@ -105,11 +118,29 @@ class Voice(private val context: Context, private val prefs: Prefs, private val 
         val digest = MessageDigest.getInstance("SHA-1").digest("$voice|$STYLE|$text".toByteArray())
         val file = File(context.cacheDir, "tts-${digest.joinToString("") { "%02x".format(it) }}.wav")
         if (!file.exists()) {
+            // Waiting on a 429 we already know about would only delay the fallback.
+            if (System.currentTimeMillis() < cloudVoiceBackAt) throw GatewayError(429, "")
+            val audio = try {
+                Gateway.speech(text, voice, STYLE)
+            } catch (e: GatewayError) {
+                if (e.code == 429) cloudVoiceBackAt = System.currentTimeMillis() + (e.retryAfterMs ?: MINUTE_MS)
+                throw e
+            }
             val part = File(file.path + ".part")
-            part.writeBytes(Gateway.speech(text, voice, STYLE))
+            part.writeBytes(audio)
             part.renameTo(file)
         }
         return file
+    }
+
+    private fun quotaMessage(): String {
+        val backAt = cloudVoiceBackAt
+        return if (backAt - System.currentTimeMillis() < 2 * MINUTE_MS) {
+            "The free voice allows only a few clips a minute. Try again in a minute."
+        } else {
+            "Google's free voice allows 10 clips a day and they're used up. " +
+                "Back at ${DateFormat.getTimeInstance(DateFormat.SHORT).format(Date(backAt))}."
+        }
     }
 
     private fun play(file: File, text: String, onDone: () -> Unit) {
@@ -150,12 +181,17 @@ class Voice(private val context: Context, private val prefs: Prefs, private val 
     }
 
     private fun speakOnDevice(text: String, onDone: () -> Unit) {
-        val engine = tts
-        if (engine == null) {
-            tts = TextToSpeech(context) { status ->
-                if (status == TextToSpeech.SUCCESS) speakOnDevice(text, onDone) else onDone()
+        val engine = deviceVoice()
+        when (deviceVoiceOk) {
+            null -> {
+                whenDeviceVoiceStarts = { speakOnDevice(text, onDone) }
+                return
             }
-            return
+            false -> {
+                onDone()
+                return
+            }
+            true -> Unit
         }
         var tick = 0
         engine.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
@@ -235,6 +271,11 @@ class Voice(private val context: Context, private val prefs: Prefs, private val 
         const val PREVIEW_LINE = "Hey! This is how I sound. Tap me whenever you need a hand."
         const val SAMPLE_RATE = 24_000
         const val WINDOW_MS = 50
+        const val MINUTE_MS = 60_000L
+
+        /** Google's free voice is out of quota until this wall-clock time, so lines go straight to the phone's voice. */
+        @Volatile
+        var cloudVoiceBackAt = 0L
     }
 }
 

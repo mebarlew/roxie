@@ -63,11 +63,18 @@ class WakeWord(private val context: Context, private val onWake: () -> Unit) {
             val r = Recognizer(loaded, SAMPLE_RATE, GRAMMAR)
             recognizer = r
             service = SpeechService(r, SAMPLE_RATE).also { it.startListening(listener) }
-        }.onFailure { end() }
+        }.onFailure { retryLater() }
+    }
+
+    /** Usually the mic was busy for a moment: try again instead of staying deaf until the next tap. */
+    private fun retryLater() {
+        end()
+        main.postDelayed({ if (listening) begin() }, RETRY_MS)
     }
 
     private fun end() {
-        service?.stop()
+        // cancel, not stop: stop hands over one last result, which could wake it after it was told to pause.
+        service?.cancel()
         service?.shutdown()
         service = null
         recognizer?.close()
@@ -75,6 +82,8 @@ class WakeWord(private val context: Context, private val onWake: () -> Unit) {
     }
 
     private fun heard(hypothesis: String?) {
+        // A result can already be queued on the main thread when listening is switched off.
+        if (!listening) return
         val text = hypothesis?.let { runCatching { JSONObject(it).optString("text") }.getOrNull() }.orEmpty()
         if (WAKE.containsMatchIn(text)) {
             // Frees the mic for the real speech recognizer before handing over.
@@ -88,7 +97,7 @@ class WakeWord(private val context: Context, private val onWake: () -> Unit) {
         override fun onPartialResult(hypothesis: String?) = Unit
         override fun onResult(hypothesis: String?) = heard(hypothesis)
         override fun onFinalResult(hypothesis: String?) = heard(hypothesis)
-        override fun onError(exception: Exception?) = end()
+        override fun onError(exception: Exception?) = retryLater()
         override fun onTimeout() = Unit
     }
 
@@ -97,6 +106,7 @@ class WakeWord(private val context: Context, private val onWake: () -> Unit) {
         private const val MODEL = "vosk-model-small-en-us-0.15"
         private const val MODEL_URL = "https://alphacephei.com/vosk/models/$MODEL.zip"
         private const val SAMPLE_RATE = 16_000f
+        private const val RETRY_MS = 2_000L
 
         /**
          * The phrase, "[unk]", and everyday words for ordinary speech to land on. With only the phrase and

@@ -65,6 +65,7 @@ class BubbleService : Service() {
             mouthOpen = open
             if (open) lastMouthAt = SystemClock.uptimeMillis()
         }
+        voice.warmUp()
         wake = WakeWord(this, ::onWakeWord)
         windows = getSystemService(Context.WINDOW_SERVICE) as WindowManager
         audio = getSystemService(Context.AUDIO_SERVICE) as AudioManager
@@ -230,7 +231,8 @@ class BubbleService : Service() {
         r.setRecognitionListener(listener)
         canRetryListening = retry
         mode = Mode.LISTENING
-        showBubble("🎤 I'm listening…", animate = false)
+        // "Listening" only once the recognizer really is: words said before that are lost.
+        showBubble("🎤 …", animate = false)
         r.startListening(
             Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH)
                 .putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
@@ -239,7 +241,9 @@ class BubbleService : Service() {
     }
 
     private val listener = object : RecognitionListener {
-        override fun onReadyForSpeech(params: Bundle?) = Unit
+        override fun onReadyForSpeech(params: Bundle?) {
+            if (mode == Mode.LISTENING) showBubble("🎤 I'm listening…", animate = false)
+        }
         override fun onBeginningOfSpeech() = Unit
         override fun onRmsChanged(rmsdB: Float) = Unit
         override fun onBufferReceived(buffer: ByteArray?) = Unit

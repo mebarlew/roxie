@@ -299,15 +299,17 @@ class SpeechBubbleView(
         }
         // The untyped rest stays laid out (transparent), so the bubble never changes size while typing.
         var shown = 0
+        // Long answers type faster, so no message takes more than about a second to appear.
+        val perStep = maxOf(2, message.length / TYPING_STEPS + 1)
         body.text = partial(message, shown)
         onTyping(true)
         val step = object : Runnable {
             override fun run() {
-                shown = (shown + 2).coerceAtMost(message.length)
+                shown = (shown + perStep).coerceAtMost(message.length)
                 if (shown < message.length && Character.isLowSurrogate(message[shown])) shown++
                 body.text = partial(message, shown)
                 if (shown < message.length) {
-                    main.postDelayed(this, 30)
+                    main.postDelayed(this, TYPING_STEP_MS)
                 } else {
                     typer = null
                     onTyping(false)
@@ -315,7 +317,7 @@ class SpeechBubbleView(
             }
         }
         typer = step
-        main.postDelayed(step, 30)
+        main.postDelayed(step, TYPING_STEP_MS)
     }
 
     fun stopTyping() {
@@ -333,6 +335,11 @@ class SpeechBubbleView(
         if (shown < message.length) {
             setSpan(ForegroundColorSpan(Color.TRANSPARENT), shown, message.length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
         }
+    }
+
+    private companion object {
+        const val TYPING_STEP_MS = 30L
+        const val TYPING_STEPS = 35
     }
 }
 
