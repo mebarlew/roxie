@@ -13,6 +13,7 @@ import android.os.Handler
 import android.os.Looper
 import android.text.SpannableString
 import android.text.Spanned
+import android.text.method.ScrollingMovementMethod
 import android.text.style.ForegroundColorSpan
 import android.view.Gravity
 import android.view.MotionEvent
@@ -266,6 +267,7 @@ class SpeechBubbleView(
         body.setTextColor(INK)
         body.textSize = 16f
         body.setLineSpacing(0f, 1.15f)
+        body.movementMethod = ScrollingMovementMethod()
         addView(body)
         val row = LinearLayout(context).apply { gravity = Gravity.END or Gravity.CENTER_VERTICAL }
         speaker.text = "🔊"
@@ -289,6 +291,9 @@ class SpeechBubbleView(
         typer?.let { main.removeCallbacks(it) }
         typer = null
         this.message = message
+        // A long answer scrolls inside the bubble, so the bubble and its close button stay on screen.
+        body.maxHeight = (resources.displayMetrics.heightPixels * MAX_TEXT_SHARE).toInt()
+        body.scrollTo(0, 0)
         speaker.visibility = if (speakerState == Speaker.HIDDEN) GONE else VISIBLE
         speaker.alpha = if (speakerState == Speaker.MUTED) 0.3f else 1f
         speaker.isEnabled = speakerState == Speaker.ON
@@ -340,6 +345,7 @@ class SpeechBubbleView(
     private companion object {
         const val TYPING_STEP_MS = 30L
         const val TYPING_STEPS = 35
+        const val MAX_TEXT_SHARE = 0.4f
     }
 }
 
