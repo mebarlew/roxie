@@ -3,6 +3,7 @@ package dev.mebarlew.roxie
 import android.content.Context
 import android.os.Handler
 import android.os.Looper
+import org.json.JSONArray
 import org.json.JSONObject
 import org.vosk.Model
 import org.vosk.Recognizer
@@ -73,9 +74,9 @@ class WakeWord(private val context: Context, private val onWake: () -> Unit) {
         recognizer = null
     }
 
-    private fun heard(hypothesis: String?, key: String) {
-        val text = hypothesis?.let { runCatching { JSONObject(it).optString(key) }.getOrNull() }.orEmpty()
-        if (PHRASE in text) {
+    private fun heard(hypothesis: String?) {
+        val text = hypothesis?.let { runCatching { JSONObject(it).optString("text") }.getOrNull() }.orEmpty()
+        if (WAKE.containsMatchIn(text)) {
             // Frees the mic for the real speech recognizer before handing over.
             listening = false
             onWake()
@@ -83,9 +84,10 @@ class WakeWord(private val context: Context, private val onWake: () -> Unit) {
     }
 
     private val listener = object : RecognitionListener {
-        override fun onPartialResult(hypothesis: String?) = heard(hypothesis, "partial")
-        override fun onResult(hypothesis: String?) = heard(hypothesis, "text")
-        override fun onFinalResult(hypothesis: String?) = heard(hypothesis, "text")
+        // Partial guesses are far too eager (they fired on ordinary Polish chat); only final results count.
+        override fun onPartialResult(hypothesis: String?) = Unit
+        override fun onResult(hypothesis: String?) = heard(hypothesis)
+        override fun onFinalResult(hypothesis: String?) = heard(hypothesis)
         override fun onError(exception: Exception?) = end()
         override fun onTimeout() = Unit
     }
@@ -96,8 +98,22 @@ class WakeWord(private val context: Context, private val onWake: () -> Unit) {
         private const val MODEL_URL = "https://alphacephei.com/vosk/models/$MODEL.zip"
         private const val SAMPLE_RATE = 16_000f
 
-        /** Only the phrase or "unknown": a tiny grammar makes the small model a cheap keyword spotter. */
-        private const val GRAMMAR = "[\"$PHRASE\", \"[unk]\"]"
+        /**
+         * The phrase, "[unk]", and everyday words for ordinary speech to land on. With only the phrase and
+         * "[unk]" to choose from, normal talk (Polish especially) kept being forced onto "hey ducky". Replaying
+         * Polish and English chatter through the model took false wakes from 7 to 0 while still catching 4/4.
+         */
+        private val GRAMMAR = JSONArray(
+            listOf(PHRASE, "[unk]") + (
+                "hey hi hello a the and i you he she it we they yes no okay ok so but well what where when how why " +
+                    "this that duck ducks lucky buddy dad daddy doug dog dock docky ducked key hockey jockey honey " +
+                    "funny money go get got do did done see saw say said tell take make made come came know think " +
+                    "want need like look"
+                ).split(" "),
+        ).toString()
+
+        /** "a ducky" is how the model often hears a quick "hey ducky", so any final "ducky" wakes it. */
+        private val WAKE = Regex("\\bducky\\b")
 
         private fun root(context: Context) = File(context.filesDir, "vosk")
         private fun modelDir(context: Context) = File(root(context), MODEL)
