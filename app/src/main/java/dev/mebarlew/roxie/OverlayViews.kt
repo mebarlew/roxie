@@ -201,6 +201,9 @@ class BuddyView(
                 }
             }
             MotionEvent.ACTION_UP -> if (dragging) onDrag(0, 0, true) else performClick()
+            // The system can take the pointer away mid-drag (screen off, a gesture-nav swipe at the edge): end the
+            // drag so the service doesn't stay stuck in it, but don't count it as a tap.
+            MotionEvent.ACTION_CANCEL -> if (dragging) onDrag(0, 0, true)
         }
         return true
     }
