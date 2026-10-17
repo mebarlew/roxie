@@ -29,6 +29,10 @@ val INK = Color.rgb(52, 40, 92)
 /** The floating buddy disc. Plays 100 ms frame animations; drag to move, tap to talk. */
 class BuddyView(
     context: Context,
+    /** The finger went down: a tap may follow, so the service can start getting ready now. */
+    private val onPress: () -> Unit,
+    /** That press turned into a drag or the system cancelled it, so no tap is coming. */
+    private val onPressCancel: () -> Unit,
     private val onTap: () -> Unit,
     private val onDrag: (dx: Int, dy: Int, done: Boolean) -> Unit,
 ) : View(context) {
@@ -189,9 +193,13 @@ class BuddyView(
                 lastX = downX
                 lastY = downY
                 dragging = false
+                onPress()
             }
             MotionEvent.ACTION_MOVE -> {
-                if (!dragging && hypot(event.rawX - downX, event.rawY - downY) > slop) dragging = true
+                if (!dragging && hypot(event.rawX - downX, event.rawY - downY) > slop) {
+                    dragging = true
+                    onPressCancel()
+                }
                 if (dragging) {
                     val dx = (event.rawX - lastX).toInt()
                     val dy = (event.rawY - lastY).toInt()
@@ -203,7 +211,7 @@ class BuddyView(
             MotionEvent.ACTION_UP -> if (dragging) onDrag(0, 0, true) else performClick()
             // The system can take the pointer away mid-drag (screen off, a gesture-nav swipe at the edge): end the
             // drag so the service doesn't stay stuck in it, but don't count it as a tap.
-            MotionEvent.ACTION_CANCEL -> if (dragging) onDrag(0, 0, true)
+            MotionEvent.ACTION_CANCEL -> if (dragging) onDrag(0, 0, true) else onPressCancel()
         }
         return true
     }

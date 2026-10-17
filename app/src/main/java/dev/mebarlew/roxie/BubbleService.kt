@@ -18,6 +18,7 @@ import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
 import android.os.SystemClock
+import android.util.Log
 import android.speech.RecognitionListener
 import android.speech.RecognizerIntent
 import android.speech.SpeechRecognizer
@@ -56,6 +57,9 @@ class BubbleService : Service() {
     private var lastMouthAt = 0L
     private var typing = false
     private var dragging = false
+
+    /** The touch-down already started this conversation, so its tap-up must not end it again. */
+    private var pressStarted = false
     private var canRetryListening = false
     private var happyUntil = 0L
 
@@ -166,7 +170,9 @@ class BubbleService : Service() {
 
     private fun addOverlays() {
         val screen = resources.displayMetrics
-        buddyView = BuddyView(this, onTap = ::onBuddyTap, onDrag = ::onBuddyDrag)
+        buddyView = BuddyView(
+            this, onPress = ::onBuddyPress, onPressCancel = ::onBuddyPressCancel, onTap = ::onBuddyTap, onDrag = ::onBuddyDrag,
+        )
         val size = buddyView.size
         buddyParams = overlayParams(size, size).apply {
             x = if (prefs.bubbleX >= 0) prefs.bubbleX else screen.widthPixels - size - size / 4
@@ -192,7 +198,30 @@ class BubbleService : Service() {
         }
     }
 
+    /**
+     * A touch that will start listening opens the session on the way down, so the whole press is spent
+     * connecting. Touches that shush, end a session or hit tired mode wait for the tap as before.
+     */
+    private fun onBuddyPress() {
+        pressStarted = live == null && mode == Mode.IDLE && !tired()
+        if (pressStarted) startConversation()
+    }
+
+    /** The press became a drag: nothing was asked, so close the session and mic it opened. */
+    private fun onBuddyPressCancel() {
+        if (!pressStarted) return
+        pressStarted = false
+        endLive(null)
+        Log.d(TAG, "press turned into a drag: live session and mic closed")
+        // lookAtScreen hid the bubble for the screenshot that's no longer coming.
+        if (bubbleShown) bubble.visibility = View.VISIBLE
+    }
+
     private fun onBuddyTap() {
+        if (pressStarted) {
+            pressStarted = false
+            return
+        }
         if (live != null) {
             // While it talks a tap shushes it and it keeps listening; while it listens a tap ends the session.
             if (mode == Mode.ANSWERING) shush() else endLive("Okay, I'll be right here!")
@@ -215,6 +244,10 @@ class BubbleService : Service() {
             showTired()
             return
         }
+        startConversation()
+    }
+
+    private fun startConversation() {
         Latency.tap()
         voice.stop()
         bubble.stopTyping()
@@ -228,11 +261,7 @@ class BubbleService : Service() {
             showTired()
             return
         }
-        Latency.tap()
-        voice.stop()
-        bubble.stopTyping()
-        typing = false
-        startLive()
+        startConversation()
     }
 
     /** Grabs the screen without the speech bubble in the way, when screen reading is switched on. */
@@ -669,6 +698,7 @@ class BubbleService : Service() {
 
     companion object {
         const val ACTION_STOP = "dev.mebarlew.roxie.STOP"
+        private const val TAG = "RubberDuck"
 
         /** Compose state, so the setup screen flips the moment the buddy wakes or is put to sleep. */
         var awake by mutableStateOf(false)
