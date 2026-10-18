@@ -561,7 +561,7 @@ class BubbleService : Service() {
             liveBuddy = prefs.buddy
             liveVoice = prefs.voice
             liveMemory = brain.remembered()
-            live = LiveSession(brain.systemPrompt(), prefs.voice, LiveEvents(gen)).also { it.start() }
+            live = LiveSession(brain.livePrompt(), prefs.voice, LiveEvents(gen)).also { it.start() }
         }
         lookAtScreen { note ->
             // A drag may have sent the session back to hot meanwhile: then there's no question to show it to.

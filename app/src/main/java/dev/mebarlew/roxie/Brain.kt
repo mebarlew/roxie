@@ -95,7 +95,7 @@ class Brain(private val prefs: Prefs, private val memory: Memory) {
         return JSONObject().put("role", "user").put("content", content)
     }
 
-    /** Also the system instruction of a Live voice session, so Live gets the remembered facts and today's summary too. */
+    /** The persona, the remembered facts and today's summary. Live builds on it in [livePrompt]. */
     fun systemPrompt(): String {
         val name = name()
         val buddy = prefs.buddy
@@ -111,6 +111,17 @@ class Brain(private val prefs: Prefs, private val memory: Memory) {
         """.trimIndent()
         // Added after trimIndent: unindented lines spliced into the raw string would stop it trimming.
         return listOf(base, remembered()).filter { it.isNotEmpty() }.joinToString("\n\n")
+    }
+
+    /**
+     * The system instruction of a Live voice session: [systemPrompt] plus the last few turns, so a new session picks up
+     * where the last one stopped. Seeding them as history goes silent on gemini-3.8-live, and the B9c-2 spike measured
+     * 8 turns at ~0.1 s more setup with answers as fast, where all of today made each answer ~0.2 s slower.
+     */
+    fun livePrompt(): String {
+        val recent = memory.turns().takeLast(LIVE_RECENT_TURNS)
+        if (recent.isEmpty()) return systemPrompt()
+        return "${systemPrompt()}\n\nThe latest of today's conversation, most recent last:\n${transcript(recent)}"
     }
 
     /** The facts and today's summary as [systemPrompt] puts them, so a hot Live session can tell if its own are out of date. */
@@ -130,6 +141,7 @@ class Brain(private val prefs: Prefs, private val memory: Memory) {
 
     private companion object {
         const val DIARY_TRIES = 3
+        const val LIVE_RECENT_TURNS = 8
         val DAY: DateTimeFormatter = DateTimeFormatter.ofPattern("EEEE d MMMM yyyy", Locale.ENGLISH)
         val DAY_NO_YEAR: DateTimeFormatter = DateTimeFormatter.ofPattern("EEEE d MMMM", Locale.ENGLISH)
     }
