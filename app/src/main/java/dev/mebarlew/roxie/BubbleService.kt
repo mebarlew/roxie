@@ -38,6 +38,7 @@ import java.text.DateFormat
 import java.util.Calendar
 import java.util.Date
 import java.util.concurrent.Executors
+import kotlin.random.Random
 
 /** Keeps the buddy floating over other apps and runs the tap → listen → answer loop, live over Gemini Live. */
 class BubbleService : Service() {
@@ -65,6 +66,12 @@ class BubbleService : Service() {
 
     /** The touch-down already started this conversation, so its tap-up must not end it again. */
     private var pressStarted = false
+
+    /** A Live session that dropped gets one quick retry; after that the old chain answers instead. */
+    private var liveRetried = false
+
+    /** Until then taps use the old chain: Google's Live quota is out, while the chat models count their own. */
+    private var liveRestUntil = 0L
     private var canRetryListening = false
     private var happyUntil = 0L
 
@@ -256,7 +263,7 @@ class BubbleService : Service() {
      * connecting. Touches that shush, end a session or hit tired mode wait for the tap as before.
      */
     private fun onBuddyPress() {
-        pressStarted = (live == null || hot) && mode == Mode.IDLE && !tired()
+        pressStarted = (live == null || hot) && mode == Mode.IDLE && !tired() && !liveResting()
         if (pressStarted) startConversation()
     }
 
@@ -305,8 +312,15 @@ class BubbleService : Service() {
         voice.stop()
         bubble.stopTyping()
         typing = false
+        if (liveResting()) {
+            startListening()
+            return
+        }
+        liveRetried = false
         startLive()
     }
+
+    private fun liveResting() = System.currentTimeMillis() < liveRestUntil
 
     /** "Hey ducky": like a tap, but straight to listening so the rest of your sentence isn't talked over. */
     private fun onWakeWord() {
@@ -614,20 +628,55 @@ class BubbleService : Service() {
         if (hadSession && awake) LiveSession.warmUp()
     }
 
-    private fun liveErrorLine(error: LiveError): String = when (error) {
-        is LiveError.Refused -> when (error.code) {
-            429 -> {
-                tiredUntil = System.currentTimeMillis() + untilUtcMidnight()
-                tiredLine()
-            }
-            401, 403 -> "My key to the brain isn't working. The app needs a new gateway key."
-            else -> "My brain hiccuped (error ${error.code}). Try again?"
+    /**
+     * A session ended by itself. A drop gets one quick retry, then the old chain (phone speech recognition →
+     * chat) answers; a Live quota hit sends taps to the old chain for a while; a refused key or cap says so.
+     */
+    private fun onLiveClosed(error: LiveError) {
+        // 1011 covers quota as well as inference errors and deadlines, so the reason is worth keeping.
+        Log.d(TAG, "live session closed: ${describe(error)}")
+        if (hot) {
+            endLive(null)
+            return
         }
-        is LiveError.Quota -> {
-            tiredUntil = System.currentTimeMillis() + LIVE_QUOTA_REST_MS
+        when (error) {
+            is LiveError.Refused -> endLive(refusedLine(error.code))
+            is LiveError.Quota -> {
+                liveRestUntil = System.currentTimeMillis() + LIVE_QUOTA_REST_MS
+                endLive(null)
+                startListening()
+            }
+            is LiveError.Server, is LiveError.Network -> {
+                endLive(null)
+                if (liveRetried) {
+                    startListening()
+                } else {
+                    // Google's advice for transient errors: retry, with jitter, a limited number of times.
+                    liveRetried = true
+                    showBubble("🎤 One sec, reconnecting…", animate = false)
+                    main.postDelayed(
+                        { if (mode == Mode.IDLE && live == null) startLive() },
+                        RETRY_LIVE_MS + Random.nextLong(RETRY_JITTER_MS),
+                    )
+                }
+            }
+        }
+    }
+
+    private fun describe(error: LiveError) = when (error) {
+        is LiveError.Refused -> "refused ${error.code}"
+        is LiveError.Quota -> "quota: ${error.reason}"
+        is LiveError.Server -> "closed ${error.code}: ${error.reason}"
+        is LiveError.Network -> "network: ${error.message}"
+    }
+
+    private fun refusedLine(code: Int) = when (code) {
+        429 -> {
+            tiredUntil = System.currentTimeMillis() + untilUtcMidnight()
             tiredLine()
         }
-        is LiveError.Server, is LiveError.Network -> "I can't reach my brain right now. Is the internet on?"
+        401, 403 -> "My key to the brain isn't working. The app needs a new gateway key."
+        else -> "My brain hiccuped (error $code). Try again?"
     }
 
     /** One per session. Audio goes straight to the speaker; everything else is handled on the main thread. */
@@ -691,8 +740,7 @@ class BubbleService : Service() {
             ui { turnDone = true }
         }
 
-        // An idle session ending is nothing to report; the next tap just connects again.
-        override fun onClosed(error: LiveError) = ui { endLive(if (hot) null else liveErrorLine(error)) }
+        override fun onClosed(error: LiveError) = ui { onLiveClosed(error) }
     }
 
     private fun tired() = System.currentTimeMillis() < tiredUntil
@@ -854,5 +902,9 @@ class BubbleService : Service() {
 
         /** Community reports put a Live quota hit as a 1011 close; resting a while beats hammering it. */
         private const val LIVE_QUOTA_REST_MS = 10 * 60_000L
+
+        /** About a second before the one retry after a dropped Live session, spread so retries don't line up. */
+        private const val RETRY_LIVE_MS = 800L
+        private const val RETRY_JITTER_MS = 400L
     }
 }
