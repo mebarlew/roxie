@@ -615,10 +615,27 @@ class BubbleService : Service() {
         turnDone = false
         if (mode == Mode.ANSWERING) Latency.replyDone()
         voice.stop()
+        keepLiveTurn(cutShort = false)
         lastAnswer = saidText
         heardText = ""
         saidText = ""
         mode = Mode.LISTENING
+    }
+
+    /**
+     * Today's memory gets each Live exchange as text, the way the old chain keeps its own; screenshots never go in.
+     * Saved on [chores], so the session never waits on the file.
+     */
+    private fun keepLiveTurn(cutShort: Boolean) {
+        val question = heardText.trim()
+        val answer = saidText.trim()
+        if (question.isEmpty() || answer.isEmpty()) return
+        val kept = if (cutShort) "$answer…" else answer
+        val memory = Memory.get(this)
+        chores.execute {
+            memory.add(question, kept)
+            brain.tidyMemory()
+        }
     }
 
     /**
@@ -643,6 +660,9 @@ class BubbleService : Service() {
     private fun shush() {
         liveAudio?.flush()
         voice.stop()
+        keepLiveTurn(cutShort = true)
+        heardText = ""
+        saidText = ""
         if (turnStreaming) shushed = true
         mode = Mode.LISTENING
     }
@@ -661,6 +681,9 @@ class BubbleService : Service() {
             liveReady = false
         }
         voice.stop()
+        keepLiveTurn(cutShort = !turnDone)
+        heardText = ""
+        saidText = ""
         turnDone = false
         mode = Mode.IDLE
         if (message != null) showBubble(message)
@@ -768,6 +791,7 @@ class BubbleService : Service() {
                 // The user talked over it: what's queued is stale, and the new question is already coming in.
                 liveAudio?.flush()
                 voice.stop()
+                keepLiveTurn(cutShort = true)
                 heardText = ""
                 saidText = ""
                 // The buddy's own voice was in the mic until now, so the floor starts over, and so does the pose.
