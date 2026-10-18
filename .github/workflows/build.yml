@@ -27,8 +27,16 @@ jobs:
           ROXIE_KEYSTORE: ${{ runner.temp }}/roxie.p12
           ROXIE_KEYSTORE_PASSWORD: ${{ secrets.ROXIE_KEYSTORE_PASSWORD }}
         run: gradle :app:assembleRelease --no-daemon --stacktrace
+      # The repo is public and the APK carries the app's gateway key, so only an encrypted copy is uploaded.
+      - name: Encrypt APK
+        env:
+          ARTIFACT_PASSWORD: ${{ secrets.ROXIE_ARTIFACT_PASSWORD }}
+        run: |
+          test -n "$ARTIFACT_PASSWORD"
+          openssl enc -aes-256-cbc -pbkdf2 -salt -pass env:ARTIFACT_PASSWORD \
+            -in app/build/outputs/apk/release/app-release.apk -out roxie-apk.enc
       - uses: actions/upload-artifact@v7
         with:
           name: roxie-apk
-          path: app/build/outputs/apk/release/*.apk
+          path: roxie-apk.enc
           retention-days: 7
