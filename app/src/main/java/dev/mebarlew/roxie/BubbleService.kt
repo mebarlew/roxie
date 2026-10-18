@@ -504,7 +504,7 @@ class BubbleService : Service() {
         lastLiveActivity = SystemClock.uptimeMillis()
         mode = Mode.LISTENING
         if (resume) {
-            session?.handOverOnGoAway = true
+            session.handOverOnGoAway = true
             // Already set up: the mic streams straight in, so this is the moment it's ready.
             Latency.micReady()
         } else {
