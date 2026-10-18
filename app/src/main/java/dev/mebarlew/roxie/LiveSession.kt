@@ -88,10 +88,24 @@ class LiveSession(private val systemPrompt: String, private val voice: String, p
         val speech = JSONObject().put("voiceConfig", JSONObject().put("prebuiltVoiceConfig", JSONObject().put("voiceName", voice)))
         val setup = JSONObject()
             .put("model", "models/$MODEL")
-            .put("generationConfig", JSONObject().put("responseModalities", JSONArray().put("AUDIO")).put("speechConfig", speech))
+            .put(
+                "generationConfig",
+                JSONObject()
+                    .put("responseModalities", JSONArray().put("AUDIO"))
+                    .put("speechConfig", speech)
+                    // No thinking before answering: on the server it kept the slowest turn at ~1.5 s instead of up to 5 s.
+                    .put("thinkingConfig", JSONObject().put("thinkingBudget", 0)),
+            )
             .put("systemInstruction", JSONObject().put("parts", JSONArray().put(JSONObject().put("text", systemPrompt))))
-            // 500 ms of silence ends the turn: on the server it cut end of speech → first audio from ~2.3 s to ~1.6 s.
-            .put("realtimeInputConfig", JSONObject().put("automaticActivityDetection", JSONObject().put("silenceDurationMs", 500)))
+            // 300 ms of silence ends the turn, with low end-of-speech sensitivity so a pause between two sentences
+            // doesn't: measured on the server, end of speech → first audio had a median of 1.12 s and never cut anyone off.
+            .put(
+                "realtimeInputConfig",
+                JSONObject().put(
+                    "automaticActivityDetection",
+                    JSONObject().put("silenceDurationMs", 300).put("endOfSpeechSensitivity", "END_SENSITIVITY_LOW"),
+                ),
+            )
             .put("inputAudioTranscription", JSONObject())
             .put("outputAudioTranscription", JSONObject())
             // Without compression an audio session stops at 15 minutes, and with a screen frame in it at 2.
