@@ -1,7 +1,11 @@
 package dev.mebarlew.roxie
 
+import android.os.SystemClock
 import android.util.Base64
+import okhttp3.Call
+import okhttp3.Callback
 import okhttp3.OkHttpClient
+import okhttp3.Protocol
 import okhttp3.Request
 import okhttp3.Response
 import okhttp3.WebSocket
@@ -9,6 +13,7 @@ import okhttp3.WebSocketListener
 import okio.ByteString
 import org.json.JSONArray
 import org.json.JSONObject
+import java.io.IOException
 
 /**
  * One Gemini Live conversation through the gateway's /v1/live WebSocket: mic audio and screen frames go up,
@@ -81,6 +86,8 @@ class LiveSession(private val systemPrompt: String, private val voice: String, p
             // A header rather than ?key=, so the key stays out of URL logs.
             .header("x-goog-api-key", BuildConfig.GATEWAY_KEY)
             .build()
+        // This upgrade takes the warm connection, if there is one, so the next warm-up may open another.
+        warmedAt = 0
         pending = client.newWebSocket(request, Events())
     }
 
@@ -190,12 +197,43 @@ class LiveSession(private val systemPrompt: String, private val voice: String, p
         if (content.optBoolean("turnComplete")) listener.onTurnComplete()
     }
 
-    private companion object {
-        const val MODEL = "gemini-3.8-live"
-        const val MAX_QUEUED_BYTES = 64 * 1024L
+    companion object {
+        private const val MODEL = "gemini-3.8-live"
+        private const val MAX_QUEUED_BYTES = 64 * 1024L
+
+        /** OkHttp keeps an idle connection 5 minutes and Cloudflare 400 s, so a warm-up lasts about this long. */
+        private const val WARM_MS = 4 * 60_000L
 
         /** One client for every session, so connections share OkHttp's pools. */
-        val client = OkHttpClient()
+        private val client = OkHttpClient()
+
+        /**
+         * The WebSocket upgrade runs as HTTP/1.1 only, and OkHttp reuses a pooled connection only for a matching
+         * protocol list, so warm-ups use that list too (on the same pool) or they'd open an h2 connection it can't use.
+         */
+        private val warmClient = client.newBuilder().protocols(listOf(Protocol.HTTP_1_1)).build()
+
+        @Volatile private var warmedAt = 0L
+
+        /**
+         * Opens a connection to the gateway ahead of the next session, so its WebSocket skips DNS, TCP and TLS.
+         * `/health` is unauthenticated and doesn't count against the app's daily limit.
+         */
+        fun warmUp() {
+            val now = SystemClock.elapsedRealtime()
+            if (warmedAt != 0L && now - warmedAt < WARM_MS) return
+            warmedAt = now
+            warmClient.newCall(Request.Builder().url("${BuildConfig.GATEWAY_URL}/health").build()).enqueue(
+                object : Callback {
+                    override fun onFailure(call: Call, e: IOException) {
+                        warmedAt = 0
+                    }
+
+                    // Closing the body hands the connection back to the pool.
+                    override fun onResponse(call: Call, response: Response) = response.close()
+                },
+            )
+        }
     }
 }
 

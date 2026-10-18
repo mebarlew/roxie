@@ -7,8 +7,10 @@ import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
 import android.app.Service
+import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
+import android.content.IntentFilter
 import android.content.pm.PackageManager
 import android.content.pm.ServiceInfo
 import android.content.res.Configuration
@@ -95,6 +97,11 @@ class BubbleService : Service() {
 
     override fun onBind(intent: Intent?): IBinder? = null
 
+    // A spoofed broadcast would only cost one /health request, so exported is fine.
+    private val unlocked = object : BroadcastReceiver() {
+        override fun onReceive(context: Context, intent: Intent) = LiveSession.warmUp()
+    }
+
     override fun onCreate() {
         super.onCreate()
         prefs = Prefs(this)
@@ -111,6 +118,14 @@ class BubbleService : Service() {
         addOverlays()
         main.post(animator)
         awake = true
+        LiveSession.warmUp()
+        // Unlocking the phone is the moment a question is likeliest, so the connection is ready by the tap.
+        val unlock = IntentFilter(Intent.ACTION_USER_PRESENT)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            registerReceiver(unlocked, unlock, Context.RECEIVER_EXPORTED)
+        } else {
+            registerReceiver(unlocked, unlock)
+        }
     }
 
     /** After a rotation, keeps the buddy inside the new screen and the bubble beside it. */
@@ -136,6 +151,7 @@ class BubbleService : Service() {
 
     override fun onDestroy() {
         awake = false
+        unregisterReceiver(unlocked)
         endLive(null)
         main.removeCallbacksAndMessages(null)
         bubble.stopTyping()
@@ -526,6 +542,7 @@ class BubbleService : Service() {
     }
 
     private fun endLive(message: String?) {
+        val hadSession = live != null
         liveGen++
         live?.close()
         live = null
@@ -540,6 +557,8 @@ class BubbleService : Service() {
         turnDone = false
         mode = Mode.IDLE
         if (message != null) showBubble(message)
+        // The session used up the warm connection; get another ready for the next tap.
+        if (hadSession && awake) LiveSession.warmUp()
     }
 
     private fun liveErrorLine(error: LiveError): String = when (error) {
