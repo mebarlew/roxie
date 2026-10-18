@@ -72,6 +72,12 @@ class BubbleService : Service() {
 
     /** Until then taps use the old chain: Google's Live quota is out, while the chat models count their own. */
     private var liveRestUntil = 0L
+
+    /**
+     * Numbers each old-chain question. Its answer only shows if nothing newer was asked or started since: the
+     * single-thread io keeps a slow earlier request running after a tap moved on.
+     */
+    private var asked = 0
     private var canRetryListening = false
     private var happyUntil = 0L
 
@@ -308,6 +314,7 @@ class BubbleService : Service() {
     }
 
     private fun startConversation() {
+        asked++
         Latency.tap()
         voice.stop()
         bubble.stopTyping()
@@ -439,6 +446,7 @@ class BubbleService : Service() {
 
     private fun ask(question: String) {
         mode = Mode.THINKING
+        val id = ++asked
         val shot = screen
         screen = null
         showBubble("${if (shot != null) "👀" else "🎤"} $question", animate = false)
@@ -461,7 +469,7 @@ class BubbleService : Service() {
             } catch (e: Exception) {
                 "I can't reach my brain right now. Is the internet on?"
             }
-            main.post { if (mode == Mode.THINKING) showAnswer(answer) }
+            main.post { if (id == asked && mode == Mode.THINKING) showAnswer(answer) }
         }
     }
 
