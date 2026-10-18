@@ -106,6 +106,7 @@ class Brain(private val prefs: Prefs, private val memory: Memory) {
             Keep replies short: one to three sentences of plain text, no markdown, no lists. They show up in a small comic speech bubble and may be read aloud.
             Always reply in the language the user speaks to you.
             When a screenshot comes with a question, it shows $name's phone screen right now, with you floating on top. Use it when the question is about what's on screen, ignore it otherwise, and never read out passwords, codes or other private details you spot.
+            You can't delete memories yourself. If asked to forget something, say it's done from the Memory screen in the app.
             It is now $now.
         """.trimIndent()
         // Added after trimIndent: unindented lines spliced into the raw string would stop it trimming.
