@@ -16,6 +16,7 @@ import android.media.audiofx.NoiseSuppressor
 import android.os.Build
 import android.os.Handler
 import android.os.Looper
+import android.util.Log
 import java.util.concurrent.LinkedBlockingQueue
 import java.util.concurrent.atomic.AtomicInteger
 
@@ -84,10 +85,16 @@ class LiveAudio(
         head < framesWritten && windows.firstOrNull()?.open == true
     }
 
-    /** Starts the mic. False if the permission is missing or the phone won't record. */
+    /**
+     * Starts the mic, and gets the speaker ready meanwhile so the first reply doesn't wait for it. False if the
+     * permission is missing or the phone won't record.
+     */
     fun startMic(): Boolean {
         if (record != null) return true
         if (context.checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) return false
+        // Before recording: AOSP picks the matching mic with the communication device, so a switch at the first
+        // reply would also move the mic mid-sentence, just when the echo canceller needs a steady path.
+        routeToSpeaker()
         // AOSP only guarantees 44.1 kHz; 48 kHz divides cleanly down to 16 kHz where 16 kHz itself isn't offered.
         val (r, rate) = listOf(MIC_RATE, MIC_RATE * 3).firstNotNullOfOrNull { candidate ->
             val min = AudioRecord.getMinBufferSize(candidate, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT)
@@ -108,6 +115,7 @@ class LiveAudio(
         recording = true
         r.startRecording()
         micThread = Thread({ readMic(r, rate) }, "live-mic").also { it.start() }
+        startWriter()
         return true
     }
 
@@ -142,12 +150,16 @@ class LiveAudio(
 
     /** Queues 24 kHz 16-bit mono PCM from Live. Only call it when the buddy may make sound. */
     fun play(pcm: ByteArray) {
-        synchronized(lock) {
-            // A chunk still in flight from the socket after release() would start a writer and a track nobody frees.
-            if (released) return
-            if (writer == null) writer = Thread(::writeSpeaker, "live-speaker").also { it.start() }
-        }
+        // A chunk still in flight from the socket after release() would start a writer and a track nobody frees.
+        if (!startWriter()) return
         queue.put(Chunk(generation.get(), pcm))
+    }
+
+    /** Starts the writer thread once; false after [release]. */
+    private fun startWriter(): Boolean = synchronized(lock) {
+        if (released) return false
+        if (writer == null) writer = Thread(::writeSpeaker, "live-speaker").also { it.start() }
+        true
     }
 
     /** Drops everything not yet heard, for when the user talks over the buddy. */
@@ -179,6 +191,8 @@ class LiveAudio(
 
     private fun writeSpeaker() {
         try {
+            // Built and playing before any reply arrives: an empty stream track just waits for data.
+            synchronized(lock) { if (track == null && !released) track = newTrack() }
             while (true) {
                 val chunk = queue.take()
                 val pcm = chunk.pcm
@@ -267,7 +281,12 @@ class LiveAudio(
             // so the chunk is dropped and the next one tries again.
             return null
         }
-        routeToSpeaker()
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            // Google streams replies seconds ahead of real time, so starting at ~60 ms of audio can't underrun.
+            val before = t.startThresholdInFrames
+            val after = t.setStartThresholdInFrames(START_THRESHOLD_FRAMES)
+            Log.d(TAG, "speaker start threshold $before → $after frames")
+        }
         t.play()
         return t
     }
@@ -289,6 +308,8 @@ class LiveAudio(
         const val MOUTH_WINDOW_FRAMES = SPEAKER_RATE / 1000 * MOUTH_WINDOW_MS
         const val PEAK_FADE = 0.97
         const val JOIN_MS = 500L
+        const val START_THRESHOLD_FRAMES = SPEAKER_RATE / 1000 * 60
+        const val TAG = "RubberDuck"
 
         /** The playback position in frames; Android reports it as an unsigned 32-bit count. */
         fun head(t: AudioTrack) = t.playbackHeadPosition.toLong() and 0xFFFFFFFFL
