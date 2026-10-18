@@ -279,7 +279,7 @@ private fun SetupScreen(
                 if (missing != null) Text(missing, fontSize = 13.sp, color = Ink.copy(alpha = 0.6f))
             }
             // For Bart's screenshots while the voice gets faster.
-            Latency.last?.let { Text(it.toString(), fontSize = 11.sp, color = Ink.copy(alpha = 0.5f), textAlign = TextAlign.Center) }
+            Latency.summary()?.let { Text(it, fontSize = 11.sp, color = Ink.copy(alpha = 0.5f), textAlign = TextAlign.Center) }
         }
     }
 }

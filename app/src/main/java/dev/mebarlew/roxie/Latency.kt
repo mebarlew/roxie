@@ -13,8 +13,8 @@ import androidx.compose.runtime.setValue
  */
 object Latency {
     class Turn(val tapToMic: Long?, val speechToReply: Long?, val replyToDone: Long?) {
-        override fun toString() =
-            "Last turn · tap→mic ${secs(tapToMic)} · speech end→reply ${secs(speechToReply)} · reply→done ${secs(replyToDone)}"
+        fun describe(label: String) =
+            "$label · tap→mic ${secs(tapToMic)} · speech end→reply ${secs(speechToReply)} · reply→done ${secs(replyToDone)}"
     }
 
     private var tapAt = 0L
@@ -27,6 +27,17 @@ object Latency {
 
     var last by mutableStateOf<Turn?>(null)
         private set
+
+    /** Each number's median over [turns], so one slow network moment doesn't decide a tuning call. */
+    var median by mutableStateOf<Turn?>(null)
+        private set
+
+    /** The setup screen's debug lines: the last turn, plus the median once there are a few. */
+    fun summary(): String? {
+        val turn = last ?: return null
+        val typical = median?.takeIf { turns.size > 1 }?.describe("Median of ${turns.size}")
+        return listOfNotNull(turn.describe("Last turn"), typical).joinToString("\n")
+    }
 
     fun tap() {
         // A reply that was cut off before it finished still counts, without its done time.
@@ -64,11 +75,14 @@ object Latency {
         turns.addLast(turn)
         while (turns.size > KEPT) turns.removeFirst()
         last = turn
+        median = Turn(medianOf { it.tapToMic }, medianOf { it.speechToReply }, medianOf { it.replyToDone })
         tapAt = 0
         micAt = 0
         speechEndAt = 0
         replyAt = 0
     }
+
+    private fun medianOf(number: (Turn) -> Long?): Long? = turns.mapNotNull(number).sorted().let { it.getOrNull(it.size / 2) }
 
     private fun now() = SystemClock.elapsedRealtime()
 
