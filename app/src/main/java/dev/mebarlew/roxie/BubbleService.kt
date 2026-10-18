@@ -119,6 +119,17 @@ class BubbleService : Service() {
     /** The last start picked up a hot session rather than opening one, so a drag should put it back, not end it. */
     private var resumedHot = false
 
+    // The mic hears speech stop about a second before Google's end-of-turn: the pose turns to thinking then,
+    // and Latency measures the wait from there (Q7). Only while listening, so the buddy's own voice doesn't count.
+    private val edge = SpeechEdge { speaking, at -> main.post { onSpeechEdge(speaking, at) } }
+    private var heardStop = false
+
+    private fun onSpeechEdge(speaking: Boolean, at: Long) {
+        if (live == null || hot || mode != Mode.LISTENING) return
+        heardStop = !speaking
+        Latency.localSpeechEnd(if (speaking) 0 else at)
+    }
+
     override fun onBind(intent: Intent?): IBinder? = null
 
     // A spoofed broadcast would only cost one /health request or end an idle session, so exported is fine.
@@ -526,6 +537,8 @@ class BubbleService : Service() {
         }
         liveAudio = audioOut
         soundOn = voice.soundAllowed()
+        edge.reset()
+        heardStop = false
         heardText = ""
         saidText = ""
         turnDone = false
@@ -551,6 +564,7 @@ class BubbleService : Service() {
     }
 
     private fun onLiveMic(pcm: ByteArray) {
+        edge.feed(pcm)
         synchronized(earlyLock) {
             if (!liveReady) {
                 earlyMic.addLast(pcm)
@@ -588,6 +602,8 @@ class BubbleService : Service() {
 
     /** Ends the turn once its audio has played out, and goes back to listening with the session open. */
     private fun finishLiveTurn() {
+        edge.reset()
+        heardStop = false
         turnDone = false
         if (mode == Mode.ANSWERING) Latency.replyDone()
         voice.stop()
@@ -746,6 +762,9 @@ class BubbleService : Service() {
                 voice.stop()
                 heardText = ""
                 saidText = ""
+                // The buddy's own voice was in the mic until now, so the floor starts over, and so does the pose.
+                edge.reset()
+                heardStop = false
                 mode = Mode.LISTENING
             }
         }
@@ -869,6 +888,7 @@ class BubbleService : Service() {
     private fun currentAnim(): Anim = when {
         dragging -> Anim.DRAGGED
         speaking() || typing -> Anim.TALKING
+        mode == Mode.LISTENING && heardStop -> Anim.THINKING
         mode == Mode.LISTENING -> Anim.LISTENING
         mode == Mode.THINKING -> Anim.THINKING
         tired() -> Anim.SLEEPY
