@@ -8,6 +8,7 @@ import android.media.AudioDeviceInfo
 import android.media.AudioFormat
 import android.media.AudioManager
 import android.media.AudioRecord
+import android.media.AudioRecordingConfiguration
 import android.media.AudioTrack
 import android.media.MediaRecorder
 import android.media.audiofx.AcousticEchoCanceler
@@ -24,19 +25,21 @@ import java.util.concurrent.atomic.AtomicInteger
  * Sound for a Gemini Live session: the mic at the 16 kHz Live expects, run through the phone's echo
  * canceller so the buddy doesn't hear itself, and a streaming speaker at the 24 kHz Live answers in.
  * [onMic] gets 40 ms chunks of 16-bit mono PCM on the recording thread; [onMicError] runs on the main
- * thread when the recorder dies, after it has been cleaned up. Mic calls and [release] are main thread only;
+ * thread when the recorder dies or Android silences it for another app or a call (`silenced`), after it has
+ * been cleaned up. Mic calls and [release] are main thread only;
  * [play] and [flush] work from any thread.
  */
 class LiveAudio(
     private val context: Context,
     private val onMic: (ByteArray) -> Unit,
-    private val onMicError: () -> Unit,
+    private val onMicError: (silenced: Boolean) -> Unit,
 ) {
     private val audio = context.getSystemService(Context.AUDIO_SERVICE) as AudioManager
     private val main = Handler(Looper.getMainLooper())
     private var record: AudioRecord? = null
     private var effects = emptyList<AudioEffect>()
     private var micThread: Thread? = null
+    private var silencedWatch: AudioManager.AudioRecordingCallback? = null
 
     @Volatile private var recording = false
 
@@ -112,6 +115,7 @@ class LiveAudio(
             if (NoiseSuppressor.isAvailable()) NoiseSuppressor.create(r.audioSessionId) else null,
         ).onEach { it.setEnabled(true) }
         record = r
+        watchForSilencing(r)
         recording = true
         r.startRecording()
         micThread = Thread({ readMic(r, rate) }, "live-mic").also { it.start() }
@@ -128,7 +132,7 @@ class LiveAudio(
                 main.post {
                     if (record !== r) return@post
                     stopMic()
-                    onMicError()
+                    onMicError(false)
                 }
                 return
             }
@@ -137,8 +141,27 @@ class LiveAudio(
         }
     }
 
+    /**
+     * When another app or a call takes the mic, Android keeps this recorder running on silence instead of failing
+     * it; AOSP says the callback fires when capture "is silenced/unsilenced by the system".
+     */
+    private fun watchForSilencing(r: AudioRecord) {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) return
+        val watch = object : AudioManager.AudioRecordingCallback() {
+            override fun onRecordingConfigChanged(configs: List<AudioRecordingConfiguration>) {
+                if (record !== r || r.activeRecordingConfiguration?.isClientSilenced != true) return
+                stopMic()
+                onMicError(true)
+            }
+        }
+        r.registerAudioRecordingCallback(context.mainExecutor, watch)
+        silencedWatch = watch
+    }
+
     fun stopMic() {
         recording = false
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) silencedWatch?.let { record?.unregisterAudioRecordingCallback(it) }
+        silencedWatch = null
         record?.stop()
         micThread?.join(JOIN_MS)
         micThread = null

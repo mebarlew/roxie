@@ -422,17 +422,26 @@ class BubbleService : Service() {
      * Opens a Live session and starts the mic at once, while it connects and the screen is captured. No spoken
      * greeting: listening right away is what makes it feel quick.
      */
+    /** On Android 10+ a call always keeps the mic, so a session during one would only ever hear silence. */
+    private fun inCall() = audio.mode == AudioManager.MODE_IN_CALL || audio.mode == AudioManager.MODE_IN_COMMUNICATION
+
     private fun startLive() {
         // Only one recorder can have the mic.
         wake.listening = false
-        // On Android 10+ a call always keeps the mic, so a session now would only ever hear silence.
-        if (audio.mode == AudioManager.MODE_IN_CALL || audio.mode == AudioManager.MODE_IN_COMMUNICATION) {
+        if (inCall()) {
             mode = Mode.IDLE
-            showBubble("You're on a call. I'll be here after!")
+            showBubble(ON_CALL_LINE)
             return
         }
         val gen = ++liveGen
-        val audioOut = LiveAudio(this, ::onLiveMic) { if (gen == liveGen) endLive("My ears glitched. Tap me to try again!") }
+        val audioOut = LiveAudio(this, ::onLiveMic) { silenced ->
+            val line = when {
+                !silenced -> "My ears glitched. Tap me to try again!"
+                inCall() -> ON_CALL_LINE
+                else -> "Another app took the mic, or it's switched off. Tap me when it's free!"
+            }
+            if (gen == liveGen) endLive(line)
+        }
         if (!audioOut.startMic()) {
             audioOut.release()
             mode = Mode.IDLE
@@ -744,6 +753,7 @@ class BubbleService : Service() {
         private const val RETRY_LISTEN_MS = 400L
         private const val TIRED_DEFAULT_MS = 5 * 60_000L
         private const val DAY_MS = 86_400_000L
+        private const val ON_CALL_LINE = "You're on a call. I'll be here after!"
 
         /** A quiet Live session closes after this, and the wake word takes over again. */
         private const val LIVE_IDLE_MS = 30_000L
