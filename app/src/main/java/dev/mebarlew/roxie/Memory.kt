@@ -9,6 +9,7 @@ import java.io.File
 import java.io.FileNotFoundException
 import java.io.IOException
 import java.time.LocalDate
+import java.time.format.DateTimeParseException
 
 /**
  * What the buddy remembers, kept on the phone only: today's conversation (the older part folded into a summary),
@@ -157,7 +158,8 @@ class Memory private constructor(private val dir: File) {
             return
         }
         try {
-            day = json.optString("day", day)
+            // Days are parsed on every read of today and in the diary chore, so a bad one has to be caught here.
+            day = LocalDate.parse(json.optString("day", day)).toString()
             summary = json.optString("summary")
             json.optJSONArray("turns")?.forEach { turns += turn(it) }
             json.optJSONArray("facts")?.forEach { facts += Fact(it.getString("text"), it.getLong("at")) }
@@ -165,9 +167,11 @@ class Memory private constructor(private val dir: File) {
             json.optJSONArray("pending")?.forEach { past ->
                 val pastTurns = mutableListOf<Turn>()
                 past.getJSONArray("turns").forEach { pastTurns += turn(it) }
-                pending += PastDay(past.getString("day"), past.getString("summary"), pastTurns)
+                pending += PastDay(LocalDate.parse(past.getString("day")).toString(), past.getString("summary"), pastTurns)
             }
         } catch (e: JSONException) {
+            setAside()
+        } catch (e: DateTimeParseException) {
             setAside()
         }
     }
