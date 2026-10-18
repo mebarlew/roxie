@@ -95,11 +95,28 @@ class BubbleService : Service() {
     private val earlyMic = ArrayDeque<ByteArray>()
     private var liveReady = false
 
+    // A hot session: after a quiet spell the socket stays connected with the mic and speaker released, so a tap
+    // within HOT_MS answers without connecting. The prompt and voice it was set up with decide if it's reusable.
+    private var hot = false
+    private var hotUntil = 0L
+    private var nextKeepalive = 0L
+    private var liveBuddy: Buddy? = null
+    private var liveVoice = ""
+
+    /** The last start picked up a hot session rather than opening one, so a drag should put it back, not end it. */
+    private var resumedHot = false
+
     override fun onBind(intent: Intent?): IBinder? = null
 
-    // A spoofed broadcast would only cost one /health request, so exported is fine.
+    // A spoofed broadcast would only cost one /health request or end an idle session, so exported is fine.
     private val unlocked = object : BroadcastReceiver() {
-        override fun onReceive(context: Context, intent: Intent) = LiveSession.warmUp()
+        override fun onReceive(context: Context, intent: Intent) {
+            when (intent.action) {
+                Intent.ACTION_USER_PRESENT -> LiveSession.warmUp()
+                // Nobody taps a buddy on a dark screen, and the keepalive can't be counted on while the phone sleeps.
+                Intent.ACTION_SCREEN_OFF -> if (hot) endLive(null)
+            }
+        }
     }
 
     override fun onCreate() {
@@ -120,7 +137,7 @@ class BubbleService : Service() {
         awake = true
         LiveSession.warmUp()
         // Unlocking the phone is the moment a question is likeliest, so the connection is ready by the tap.
-        val unlock = IntentFilter(Intent.ACTION_USER_PRESENT)
+        val unlock = IntentFilter(Intent.ACTION_USER_PRESENT).apply { addAction(Intent.ACTION_SCREEN_OFF) }
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             registerReceiver(unlocked, unlock, Context.RECEIVER_EXPORTED)
         } else {
@@ -239,16 +256,16 @@ class BubbleService : Service() {
      * connecting. Touches that shush, end a session or hit tired mode wait for the tap as before.
      */
     private fun onBuddyPress() {
-        pressStarted = live == null && mode == Mode.IDLE && !tired()
+        pressStarted = (live == null || hot) && mode == Mode.IDLE && !tired()
         if (pressStarted) startConversation()
     }
 
-    /** The press became a drag: nothing was asked, so close the session and mic it opened. */
+    /** The press became a drag: nothing was asked, so close the mic it opened, and the session unless it was hot. */
     private fun onBuddyPressCancel() {
         if (!pressStarted) return
         pressStarted = false
-        endLive(null)
-        Log.d(TAG, "press turned into a drag: live session and mic closed")
+        if (resumedHot && live != null) goHot() else endLive(null)
+        Log.d(TAG, "press turned into a drag: mic closed, session ${if (hot) "kept hot" else "closed"}")
         // lookAtScreen hid the bubble for the screenshot that's no longer coming.
         if (bubbleShown) bubble.visibility = View.VISIBLE
     }
@@ -258,7 +275,7 @@ class BubbleService : Service() {
             pressStarted = false
             return
         }
-        if (live != null) {
+        if (live != null && !hot) {
             // While it talks a tap shushes it and it keeps listening; while it listens a tap ends the session.
             if (mode == Mode.ANSWERING) shush() else endLive("Okay, I'll be right here!")
             return
@@ -445,11 +462,17 @@ class BubbleService : Service() {
         // Only one recorder can have the mic.
         wake.listening = false
         if (inCall()) {
+            if (hot) endLive(null)
             mode = Mode.IDLE
             showBubble(ON_CALL_LINE)
             return
         }
-        val gen = ++liveGen
+        val session = live
+        val resume = hot && session != null && !session.expiring && liveBuddy == prefs.buddy && liveVoice == prefs.voice
+        if (hot && !resume) endLive(null)
+        hot = false
+        resumedHot = resume
+        val gen = if (resume) liveGen else ++liveGen
         val audioOut = LiveAudio(this, ::onLiveMic) { silenced ->
             val line = when {
                 !silenced -> "My ears glitched. Tap me to try again!"
@@ -460,6 +483,7 @@ class BubbleService : Service() {
         }
         if (!audioOut.startMic()) {
             audioOut.release()
+            if (resume) endLive(null)
             mode = Mode.IDLE
             showBubble(
                 if (checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
@@ -479,9 +503,18 @@ class BubbleService : Service() {
         shushed = false
         lastLiveActivity = SystemClock.uptimeMillis()
         mode = Mode.LISTENING
-        live = LiveSession(brain.systemPrompt(), prefs.voice, LiveEvents(gen)).also { it.start() }
+        if (resume) {
+            session?.handOverOnGoAway = true
+            // Already set up: the mic streams straight in, so this is the moment it's ready.
+            Latency.micReady()
+        } else {
+            liveBuddy = prefs.buddy
+            liveVoice = prefs.voice
+            live = LiveSession(brain.systemPrompt(), prefs.voice, LiveEvents(gen)).also { it.start() }
+        }
         lookAtScreen { note ->
-            if (gen != liveGen) return@lookAtScreen
+            // A drag may have sent the session back to hot meanwhile: then there's no question to show it to.
+            if (gen != liveGen || hot) return@lookAtScreen
             if (mode == Mode.LISTENING && heardText.isEmpty()) showBubble("$note🎤 I'm listening…", animate = false)
             sendScreen()
         }
@@ -534,6 +567,25 @@ class BubbleService : Service() {
         mode = Mode.LISTENING
     }
 
+    /**
+     * After a quiet spell: keep the session connected but release the mic and the speaker (and its call route),
+     * so nothing is heard or held while Bart uses other apps. The next tap within [HOT_MS] skips the connect.
+     */
+    private fun goHot() {
+        liveAudio?.release()
+        liveAudio = null
+        synchronized(earlyLock) { earlyMic.clear() }
+        voice.stop()
+        heardText = ""
+        saidText = ""
+        mode = Mode.IDLE
+        hot = true
+        live?.handOverOnGoAway = false
+        val now = SystemClock.uptimeMillis()
+        hotUntil = now + HOT_MS
+        nextKeepalive = now + KEEPALIVE_MS
+    }
+
     private fun shush() {
         liveAudio?.flush()
         voice.stop()
@@ -543,6 +595,7 @@ class BubbleService : Service() {
 
     private fun endLive(message: String?) {
         val hadSession = live != null
+        hot = false
         liveGen++
         live?.close()
         live = null
@@ -638,7 +691,8 @@ class BubbleService : Service() {
             ui { turnDone = true }
         }
 
-        override fun onClosed(error: LiveError) = ui { endLive(liveErrorLine(error)) }
+        // An idle session ending is nothing to report; the next tap just connects again.
+        override fun onClosed(error: LiveError) = ui { endLive(if (hot) null else liveErrorLine(error)) }
     }
 
     private fun tired() = System.currentTimeMillis() < tiredUntil
@@ -727,11 +781,22 @@ class BubbleService : Service() {
             buddyView.lipSync = if (speaking()) mouthOpen else null
             buddyView.anim = currentAnim()
             if (live != null) {
-                if (turnDone && liveAudio?.playing != true) finishLiveTurn()
-                if (mode == Mode.LISTENING && SystemClock.uptimeMillis() - lastLiveActivity > LIVE_IDLE_MS) endLive(null)
+                val now = SystemClock.uptimeMillis()
+                if (hot) {
+                    if (now >= hotUntil) {
+                        endLive(null)
+                    } else if (now >= nextKeepalive) {
+                        // A silent socket is cut after ~2 min; 20 ms of silence every 20 s kept one for 5 (L6 spike).
+                        live?.sendAudio(KEEPALIVE_FRAME)
+                        nextKeepalive = now + KEEPALIVE_MS
+                    }
+                } else {
+                    if (turnDone && liveAudio?.playing != true) finishLiveTurn()
+                    if (mode == Mode.LISTENING && now - lastLiveActivity > LIVE_IDLE_MS) goHot()
+                }
             }
             // Paused while anything plays media: speech in a video was enough to wake it.
-            wake.listening = prefs.wakeWord && live == null && !dragging && !typing && !voice.busy &&
+            wake.listening = prefs.wakeWord && (live == null || hot) && !dragging && !typing && !voice.busy &&
                 !audio.isMusicActive && (mode == Mode.IDLE || mode == Mode.ANSWERING)
             main.postDelayed(this, 50L)
         }
@@ -776,6 +841,13 @@ class BubbleService : Service() {
 
         /** A quiet Live session closes after this, and the wake word takes over again. */
         private const val LIVE_IDLE_MS = 30_000L
+
+        /** How long a quiet session stays connected for the next tap (L6 spike: held 5 min with the keepalive). */
+        private const val HOT_MS = 5 * 60_000L
+        private const val KEEPALIVE_MS = 20_000L
+
+        /** 20 ms of silence at 16 kHz: enough data to keep the socket alive, never enough to start a turn. */
+        private val KEEPALIVE_FRAME = ByteArray(640)
 
         /** 4 s of 40 ms mic chunks: enough to cover the connect, small enough to stay fresh. */
         private const val EARLY_MIC_CHUNKS = 100

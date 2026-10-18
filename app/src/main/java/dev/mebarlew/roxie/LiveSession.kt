@@ -55,6 +55,13 @@ class LiveSession(private val systemPrompt: String, private val voice: String, p
     @Volatile private var resumeHandle: String? = null
     @Volatile private var closed = false
 
+    /** Off while the session idles between chats: there's nothing to keep, so a goAway just lets it end. */
+    @Volatile var handOverOnGoAway = true
+
+    /** Google announced the end of this connection and no replacement is coming. */
+    @Volatile var expiring = false
+        private set
+
     fun start() = connect()
 
     /** 16 kHz 16-bit mono PCM from the mic. */
@@ -183,7 +190,9 @@ class LiveSession(private val systemPrompt: String, private val voice: String, p
         }
         if (msg.optJSONObject("voiceActivity")?.optString("type") == "ACTIVITY_END") listener.onUserDone()
         // Google closes the connection soon; open the next one now and switch over at its setupComplete.
-        if (msg.has("goAway") && !closed && pending == null) connect()
+        if (msg.has("goAway") && !closed) {
+            if (!handOverOnGoAway) expiring = true else if (pending == null) connect()
+        }
         val content = msg.optJSONObject("serverContent") ?: return
         content.optJSONObject("inputTranscription")?.optString("text")?.takeIf { it.isNotEmpty() }?.let(listener::onHeard)
         content.optJSONObject("outputTranscription")?.optString("text")?.takeIf { it.isNotEmpty() }?.let(listener::onSaid)
