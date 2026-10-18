@@ -46,6 +46,9 @@ class BubbleService : Service() {
 
     private val main = Handler(Looper.getMainLooper())
     private val io = Executors.newSingleThreadExecutor()
+
+    /** Memory upkeep after an answer, on its own thread so a quick next question never queues behind it. */
+    private val chores = Executors.newSingleThreadExecutor()
     private lateinit var windows: WindowManager
     private lateinit var audio: AudioManager
     private lateinit var prefs: Prefs
@@ -115,6 +118,7 @@ class BubbleService : Service() {
     private var nextKeepalive = 0L
     private var liveBuddy: Buddy? = null
     private var liveVoice = ""
+    private var liveMemory = ""
 
     /** The last start picked up a hot session rather than opening one, so a drag should put it back, not end it. */
     private var resumedHot = false
@@ -200,6 +204,7 @@ class BubbleService : Service() {
         wake.shutdown()
         voice.shutdown()
         io.shutdownNow()
+        chores.shutdownNow()
         windows.removeView(bubble)
         windows.removeView(buddyView)
         super.onDestroy()
@@ -471,7 +476,7 @@ class BubbleService : Service() {
         showBubble("${if (shot != null) "👀" else "🎤"} $question", animate = false)
         io.execute {
             val answer = try {
-                brain.ask(question, shot)
+                brain.ask(question, shot).also { chores.execute { brain.tidyMemory() } }
             } catch (e: GatewayError) {
                 when (e.code) {
                     429 -> {
@@ -509,7 +514,9 @@ class BubbleService : Service() {
             return
         }
         val session = live
-        val resume = hot && session != null && !session.expiring && liveBuddy == prefs.buddy && liveVoice == prefs.voice
+        // A wipe or an edit on the memory screen must not live on in a hot session's system instruction.
+        val resume = hot && session != null && !session.expiring && liveBuddy == prefs.buddy && liveVoice == prefs.voice &&
+            liveMemory == brain.remembered()
         if (hot && !resume) endLive(null)
         hot = false
         resumedHot = resume
@@ -553,6 +560,7 @@ class BubbleService : Service() {
         } else {
             liveBuddy = prefs.buddy
             liveVoice = prefs.voice
+            liveMemory = brain.remembered()
             live = LiveSession(brain.systemPrompt(), prefs.voice, LiveEvents(gen)).also { it.start() }
         }
         lookAtScreen { note ->

@@ -17,7 +17,6 @@ class Brain(private val prefs: Prefs, private val memory: Memory) {
 
     /** Blocking: call off the main thread. [screen] is a JPEG of the screen, sent with this question only. */
     fun ask(question: String, screen: ByteArray?): String {
-        tidyMemory()
         val messages = JSONArray().put(message("system", systemPrompt()))
         memory.turns().forEach { messages.put(message(it.role, it.text)) }
         messages.put(if (screen == null) message("user", question) else withScreen(question, screen))
@@ -28,26 +27,27 @@ class Brain(private val prefs: Prefs, private val memory: Memory) {
     }
 
     /**
-     * A diary entry when a new day starts, and the older half of today folded into the summary once today gets
-     * long. Each is one extra call at most; if it fails, nothing is lost and the next question tries again.
+     * Blocking, and meant for after an answer is shown, so no question waits on it: the diary entry of a day that
+     * has ended, and the older half of today folded into the summary once today gets long. Each is one call at
+     * most; if it fails, nothing is lost and the next answer tries again.
      */
-    private fun tidyMemory() {
+    fun tidyMemory() {
         try {
-            memory.startDay(LocalDate.now()) { day, summary, turns -> diaryEntry(day, summary, turns) }
+            memory.writeDiary { day, summary, turns -> diaryEntry(day, summary, turns) }
             if (memory.isLong()) memory.compact { summary, oldest -> Gateway.chat(prompt(compactPrompt(summary, oldest))) }
         } catch (e: GatewayError) {
-            // The question itself still goes through below.
+            // Retried after the next answer.
         } catch (e: IOException) {
-            // Same: offline now, retried with the next question.
+            // Same: offline now.
         } catch (e: JSONException) {
-            // A 200 with an odd shape (a filtered reply) is no reason to fail the question either.
+            // A 200 with an odd shape (a filtered reply): same again.
         }
     }
 
     /**
-     * Yesterday's diary entry, or null for none. A failure is retried with the next question, but one that
-     * keeps failing (a 4xx other than 429, or 3 tries) would hold the day open forever and drag yesterday's
-     * turns into every prompt, so then the day rolls over with the summary as the entry.
+     * A past day's diary entry, or null for none. A failure is retried after the next answer, but one that keeps
+     * failing (a 4xx other than 429, or 3 tries) would cost a wasted call after every answer for good, so then the
+     * summary becomes the entry.
      */
     private fun diaryEntry(day: LocalDate, summary: String, turns: List<Memory.Turn>): String? = try {
         Gateway.chat(prompt(diaryPrompt(day, summary, turns))).also { diaryFailures = 0 }
@@ -110,10 +110,16 @@ class Brain(private val prefs: Prefs, private val memory: Memory) {
             It is now $now.
         """.trimIndent()
         // Added after trimIndent: unindented lines spliced into the raw string would stop it trimming.
+        return listOf(base, remembered()).filter { it.isNotEmpty() }.joinToString("\n\n")
+    }
+
+    /** The facts and today's summary as [systemPrompt] puts them, so a hot Live session can tell if its own are out of date. */
+    fun remembered(): String {
+        val name = name()
         val facts = memory.facts().takeIf { it.isNotEmpty() }
             ?.joinToString("\n", "Things $name asked you to remember:\n") { "- ${it.text}" }
         val summary = memory.summary().takeIf { it.isNotBlank() }?.let { "Earlier today:\n$it" }
-        return listOfNotNull(base, facts, summary).joinToString("\n\n")
+        return listOfNotNull(facts, summary).joinToString("\n\n")
     }
 
     private fun name() = prefs.name.ifBlank { "your human" }
