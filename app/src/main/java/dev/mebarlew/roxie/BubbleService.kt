@@ -11,6 +11,7 @@ import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.content.pm.ServiceInfo
+import android.content.res.Configuration
 import android.graphics.PixelFormat
 import android.graphics.drawable.Icon
 import android.media.AudioManager
@@ -112,6 +113,21 @@ class BubbleService : Service() {
         awake = true
     }
 
+    /** After a rotation, keeps the buddy inside the new screen and the bubble beside it. */
+    override fun onConfigurationChanged(newConfig: Configuration) {
+        super.onConfigurationChanged(newConfig)
+        keepBuddyOnScreen()
+        windows.updateViewLayout(buddyView, buddyParams)
+        if (bubbleShown) positionBubble()
+    }
+
+    /** [positionBubble] and dragging work from these numbers, so they must stay inside the current screen. */
+    private fun keepBuddyOnScreen() {
+        val screen = resources.displayMetrics
+        buddyParams.x = buddyParams.x.coerceIn(0, (screen.widthPixels - buddyParams.width).coerceAtLeast(0))
+        buddyParams.y = buddyParams.y.coerceIn(0, (screen.heightPixels - buddyParams.height).coerceAtLeast(0))
+    }
+
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         if (intent?.action == ACTION_STOP) stopSelf()
         // Mic access only works when started from the visible app, so never auto-restart.
@@ -180,6 +196,8 @@ class BubbleService : Service() {
             x = if (prefs.bubbleX >= 0) prefs.bubbleX else screen.widthPixels - size - size / 4
             y = if (prefs.bubbleY >= 0) prefs.bubbleY else screen.heightPixels / 3
         }
+        // A spot saved in landscape can be off a portrait screen.
+        keepBuddyOnScreen()
         bubble = SpeechBubbleView(this, onSpeaker = ::speakAnswer, onClose = ::closeBubble)
         bubble.visibility = View.GONE
         bubbleParams = overlayParams(WindowManager.LayoutParams.WRAP_CONTENT, WindowManager.LayoutParams.WRAP_CONTENT)
