@@ -427,14 +427,22 @@ class BubbleService : Service() {
                 return
             }
             mode = Mode.IDLE
+            // Codes 10–13 arrived in Android 12; the mic ones are what another app or a call holding it looks like.
+            val newer = Build.VERSION.SDK_INT >= Build.VERSION_CODES.S
+            val micBusy = error == SpeechRecognizer.ERROR_RECOGNIZER_BUSY || error == SpeechRecognizer.ERROR_AUDIO ||
+                (newer && error == SpeechRecognizer.ERROR_TOO_MANY_REQUESTS)
+            val noLanguage = newer &&
+                (error == SpeechRecognizer.ERROR_LANGUAGE_NOT_SUPPORTED || error == SpeechRecognizer.ERROR_LANGUAGE_UNAVAILABLE)
             showBubble(
-                when (error) {
-                    SpeechRecognizer.ERROR_NO_MATCH, SpeechRecognizer.ERROR_SPEECH_TIMEOUT ->
+                when {
+                    error == SpeechRecognizer.ERROR_NO_MATCH || error == SpeechRecognizer.ERROR_SPEECH_TIMEOUT ->
                         "Didn't catch that. Tap me and try again!"
-                    SpeechRecognizer.ERROR_INSUFFICIENT_PERMISSIONS ->
+                    error == SpeechRecognizer.ERROR_INSUFFICIENT_PERMISSIONS ->
                         "I need the microphone permission. Open Rubber Duck Assistant to fix it."
-                    SpeechRecognizer.ERROR_NETWORK, SpeechRecognizer.ERROR_NETWORK_TIMEOUT ->
+                    error == SpeechRecognizer.ERROR_NETWORK || error == SpeechRecognizer.ERROR_NETWORK_TIMEOUT ->
                         "My ears need internet right now."
+                    micBusy -> if (inCall()) ON_CALL_LINE else "Another app is using the mic right now. Try me again in a moment!"
+                    noLanguage -> "My ears don't know this language yet. Check the phone's speech settings."
                     else -> "My ears glitched (error $error). Tap me to try again!"
                 },
             )
